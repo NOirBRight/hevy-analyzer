@@ -42,7 +42,6 @@ test_*.html
 test_*.py
 
 # Build artifacts
-*.spec
 *.exe
 
 # Other

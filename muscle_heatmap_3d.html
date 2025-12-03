@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Muscle Heatmap 3D</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+        
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            min-width: 200px;
+            z-index: 100;
+        }
+        
+        .controls h3 {
+            margin-bottom: 15px;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .muscle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .muscle-item:last-child {
+            border-bottom: none;
+        }
+        
+        .muscle-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #444;
+        }
+        
+        .muscle-value {
+            font-size: 13px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 6px;
+            color: white;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+        }
+        
+        .legend-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .legend-gradient {
+            width: 200px;
+            height: 20px;
+            border-radius: 6px;
+            background: linear-gradient(to right, 
+                #3B82F6, #10B981, #FBBF24, #F97316, #EF4444);
+            margin-bottom: 8px;
+        }
+        
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .view-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+        
+        .view-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        
+        .view-btn:hover {
+            background: white;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+        }
+        
+        .view-btn.active {
+            background: #4f7bff;
+            color: white;
+        }
+        
+        .info-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 200;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    
+    <div class="controls">
+        <h3>Muscle Groups</h3>
+        <div id="muscleList"></div>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-title">Intensity</div>
+        <div class="legend-gradient"></div>
+        <div class="legend-labels">
+            <span>Low</span>
+            <span>High</span>
+        </div>
+    </div>
+    
+    <div class="view-toggle">
+        <button class="view-btn active" data-view="front">Front</button>
+        <button class="view-btn" data-view="back">Back</button>
+        <button class="view-btn" data-view="rotate">Auto Rotate</button>
+    </div>
+    
+    <div class="info-tooltip" id="tooltip"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // 接收来自 Streamlit 的数据
+        window.addEventListener('message', function(event) {
+            if (event.data.muscleData) {
+                initVisualization(event.data.muscleData);
+            }
+        });
+
+        function initVisualization(muscleData) {
+            const container = document.getElementById('container');
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+            
+            const camera = new THREE.PerspectiveCamera(
+                50,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.set(0, 1.6, 3);
+            
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // 灯光设置
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight1.position.set(5, 10, 5);
+            scene.add(directionalLight1);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+            directionalLight2.position.set(-5, 5, -5);
+            scene.add(directionalLight2);
+            
+            // 创建人体模型
+            const bodyGroup = new THREE.Group();
+            scene.add(bodyGroup);
+            
+            // 肌肉颜色映射
+            const muscleColors = {
+                'Chest': getColorByIntensity(muscleData['Chest'] || 0, muscleData),
+                'Back': getColorByIntensity(muscleData['Back'] || 0, muscleData),
+                'Shoulders': getColorByIntensity(muscleData['Shoulders'] || 0, muscleData),
+                'Arms': getColorByIntensity(muscleData['Arms'] || 0, muscleData),
+                'Core': getColorByIntensity(muscleData['Core'] || 0, muscleData),
+                'Legs': getColorByIntensity(muscleData['Legs'] || 0, muscleData)
+            };
+            
+            // 创建肌肉部位（使用改进的几何体）
+            createMuscleGroup('Chest', muscleColors['Chest'], [0, 1.45, 0.18], [0.4, 0.3, 0.14]);
+            createMuscleGroup('Back', muscleColors['Back'], [0, 1.45, -0.18], [0.4, 0.35, 0.14]);
+            createMuscleGroup('Shoulders', muscleColors['Shoulders'], [0, 1.75, 0], [0.55, 0.18, 0.32], 'shoulders');
+            createMuscleGroup('Arms', muscleColors['Arms'], [0, 1.15, 0], [0.55, 0.45, 0.28], 'arms');
+            createMuscleGroup('Core', muscleColors['Core'], [0, 1.0, 0.12], [0.32, 0.35, 0.16]);
+            createMuscleGroup('Legs', muscleColors['Legs'], [0, 0.45, 0], [0.38, 0.95, 0.28]);
+            
+            function createMuscleGroup(name, color, position, scale, type) {
+                let geometry;
+                
+                if (type === 'shoulders') {
+                    // 肩膀：两个球体
+                    const leftShoulder = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.15, 32, 32),
+                        new THREE.MeshPhongMaterial({ 
+                            color: color,
+                            shininess: 30,
+                            transparent: true,
+                            opacity: 0.95
+                        })
+                    );
+                    leftShoulder.position.set(-0.4, 1.75, 0);
+                    leftShoulder.userData = { muscleName: name };
+                    bodyGroup.add(leftShoulder);
+                    
+                    const rightShoulder = leftShoulder.clone();
+                    rightShoulder.position.set(0.4, 1.75, 0);
+                    bodyGroup.add(rightShoulder);
+                    return;
+                } else if (type === 'arms') {
+                    // 手臂：四个圆柱体
+                    const armGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.5, 16);
+                    const material = new THREE.MeshPhongMaterial({ 
+                        color: color,
+                        shininess: 30,
+                        transparent: true,
+                        opacity: 0.95
+                    });
+                    
+                    // 左上臂
+                    const leftUpperArm = new THREE.Mesh(armGeometry, material);
+                    leftUpperArm.position.set(-0.4, 1.5, 0);
+                    leftUpperArm.userData = { muscleName: name };
+                    bodyGroup.add(leftUpperArm);
+                    
+                    // 右上臂
+                    const rightUpperArm = leftUpperArm.clone();
+                    rightUpperArm.position.set(0.4, 1.5, 0);
+                    bodyGroup.add(rightUpperArm);
+                    
+                    // 左前臂
+                    const leftForearm = leftUpperArm.clone();
+                    leftForearm.position.set(-0.4, 0.9, 0);
+                    bodyGroup.add(leftForearm);
+                    
+                    // 右前臂
+                    const rightForearm = leftUpperArm.clone();
+                    rightForearm.position.set(0.4, 0.9, 0);
+                    bodyGroup.add(rightForearm);
+                    return;
+                } else {
+                    // 其他部位使用盒子
+                    geometry = new THREE.BoxGeometry(1, 1, 1);
+                }
+                
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: color,
+                    shininess: 30,
+                    transparent: true,
+                    opacity: 0.95
+                });
+                
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.set(position[0], position[1], position[2]);
+                mesh.scale.set(scale[0], scale[1], scale[2]);
+                mesh.userData = { muscleName: name };
+                bodyGroup.add(mesh);
+            }
+            
+            function getColorByIntensity(value, allData) {
+                const values = Object.values(allData).filter(v => v > 0);
+                if (values.length === 0) return 0x3B82F6; // 默认蓝色
+                
+                const max = Math.max(...values);
+                const min = Math.min(...values);
+                const range = max - min || 1;
+                const normalized = (value - min) / range;
+                
+                // 蓝色 -> 绿色 -> 黄色 -> 橙色 -> 红色
+                if (normalized < 0.25) {
+                    return lerpColor(0x3B82F6, 0x10B981, normalized * 4);
+                } else if (normalized < 0.5) {
+                    return lerpColor(0x10B981, 0xFBBF24, (normalized - 0.25) * 4);
+                } else if (normalized < 0.75) {
+                    return lerpColor(0xFBBF24, 0xF97316, (normalized - 0.5) * 4);
+                } else {
+                    return lerpColor(0xF97316, 0xEF4444, (normalized - 0.75) * 4);
+                }
+            }
+            
+            function lerpColor(color1, color2, t) {
+                const r1 = (color1 >> 16) & 0xff;
+                const g1 = (color1 >> 8) & 0xff;
+                const b1 = color1 & 0xff;
+                
+                const r2 = (color2 >> 16) & 0xff;
+                const g2 = (color2 >> 8) & 0xff;
+                const b2 = color2 & 0xff;
+                
+                const r = Math.round(r1 + (r2 - r1) * t);
+                const g = Math.round(g1 + (g2 - g1) * t);
+                const b = Math.round(b1 + (b2 - b1) * t);
+                
+                return (r << 16) | (g << 8) | b;
+            }
+            
+            // 更新侧边栏肌肉列表
+            const muscleList = document.getElementById('muscleList');
+            muscleList.innerHTML = '';
+            
+            Object.entries(muscleData).forEach(([muscle, value]) => {
+                const item = document.createElement('div');
+                item.className = 'muscle-item';
+                
+                const name = document.createElement('span');
+                name.className = 'muscle-name';
+                name.textContent = muscle;
+                
+                const valueSpan = document.createElement('span');
+                valueSpan.className = 'muscle-value';
+                valueSpan.textContent = value.toFixed(1);
+                valueSpan.style.backgroundColor = '#' + muscleColors[muscle].toString(16).padStart(6, '0');
+                
+                item.appendChild(name);
+                item.appendChild(valueSpan);
+                muscleList.appendChild(item);
+            });
+            
+            // 视图控制
+            let autoRotate = false;
+            const viewBtns = document.querySelectorAll('.view-btn');
+            
+            viewBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    viewBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    
+                    const view = btn.dataset.view;
+                    autoRotate = false;
+                    
+                    if (view === 'front') {
+                        gsap.to(camera.position, {
+                            x: 0, y: 1.6, z: 3,
+                            duration: 1,
+                            ease: 'power2.inOut'
+                        });
+                    } else if (view === 'back') {
+                        gsap.to(camera.position, {
+                            x: 0, y: 1.6, z: -3,
+                            duration: 1,
+                            ease: 'power2.inOut'
+                        });
+                    } else if (view === 'rotate') {
+                        autoRotate = true;
+                    }
+                });
+            });
+            
+            // 鼠标交互
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+            const tooltip = document.getElementById('tooltip');
+            
+            renderer.domElement.addEventListener('mousemove', (event) => {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(bodyGroup.children);
+                
+                if (intersects.length > 0) {
+                    const object = intersects[0].object;
+                    const muscleName = object.userData.muscleName;
+                    
+                    if (muscleName && muscleData[muscleName]) {
+                        tooltip.style.opacity = '1';
+                        tooltip.style.left = event.clientX + 15 + 'px';
+                        tooltip.style.top = event.clientY + 15 + 'px';
+                        tooltip.textContent = `${muscleName}: ${muscleData[muscleName].toFixed(1)}`;
+                    }
+                } else {
+                    tooltip.style.opacity = '0';
+                }
+            });
+            
+            // 动画循环
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                if (autoRotate) {
+                    bodyGroup.rotation.y += 0.01;
+                }
+                
+                camera.lookAt(0, 1.2, 0);
+                renderer.render(scene, camera);
+            }
+            
+            animate();
+            
+            // 响应式
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+        
+        // 添加 GSAP 动画库（用于平滑相机过渡）
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

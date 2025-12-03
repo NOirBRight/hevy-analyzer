@@ -1,0 +1,178 @@
+    <script>
+        const muscleData = MUSCLE_DATA_PLACEHOLDER;
+        const previousData = PREVIOUS_DATA_PLACEHOLDER;
+        const metricsType = METRICS_TYPE_PLACEHOLDER;
+        const periodType = PERIOD_TYPE_PLACEHOLDER;
+        const fullMuscleData = FULL_MUSCLE_DATA_PLACEHOLDER;
+        
+        console.log('Data loaded:', muscleData, metricsType, periodType);
+        
+        // 格式化数值
+        function formatValue(value, metrics) {
+            if (metrics === 'Workouts') return Math.round(value).toString();
+            if (metrics === 'Duration') return (value / 60).toFixed(1) + 'h';
+            if (metrics === 'Volume') return (value / 1000).toFixed(1) + 'K KG';
+            if (metrics === 'Sets') return value.toFixed(1);
+            return value.toFixed(1);
+        }
+        
+        // 颜色插值
+        function lerpColor(color1, color2, t) {
+            const hex1 = color1.replace('#', '');
+            const hex2 = color2.replace('#', '');
+            const r1 = parseInt(hex1.substring(0, 2), 16);
+            const g1 = parseInt(hex1.substring(2, 4), 16);
+            const b1 = parseInt(hex1.substring(4, 6), 16);
+            const r2 = parseInt(hex2.substring(0, 2), 16);
+            const g2 = parseInt(hex2.substring(2, 4), 16);
+            const b2 = parseInt(hex2.substring(4, 6), 16);
+            const r = Math.round(r1 + (r2 - r1) * t);
+            const g = Math.round(g1 + (g2 - g1) * t);
+            const b = Math.round(b1 + (b2 - b1) * t);
+            return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        }
+        
+        // 计算颜色
+        function getColorByIntensity(value, allData) {
+            if (value === 0 || value < 0.01) return '#9CA3AF';
+            
+            let maxThreshold;
+            if (periodType === 'Week') {
+                if (metricsType === 'Workouts') maxThreshold = 4;
+                else if (metricsType === 'Duration') maxThreshold = 4 * 60;
+                else if (metricsType === 'Sets') maxThreshold = 10;
+                else maxThreshold = null;
+            } else {
+                if (metricsType === 'Workouts') maxThreshold = 12;
+                else if (metricsType === 'Duration') maxThreshold = 12 * 60;
+                else if (metricsType === 'Sets') maxThreshold = 40;
+                else maxThreshold = null;
+            }
+            
+            let normalized;
+            if (maxThreshold) {
+                normalized = Math.min(value / maxThreshold, 1.0);
+            } else {
+                const values = Object.values(allData).filter(v => v > 0);
+                if (values.length === 0) return '#3B82F6';
+                const max = Math.max(...values);
+                const min = Math.min(...values);
+                const range = max - min || 1;
+                normalized = (value - min) / range;
+            }
+            
+            if (normalized < 0.25) return lerpColor('#3B82F6', '#10B981', normalized * 4);
+            if (normalized < 0.5) return lerpColor('#10B981', '#FBBF24', (normalized - 0.25) * 4);
+            if (normalized < 0.75) return lerpColor('#FBBF24', '#F97316', (normalized - 0.5) * 4);
+            return lerpColor('#F97316', '#EF4444', (normalized - 0.75) * 4);
+        }
+        
+        // 更新标题
+        document.getElementById('metricsTitle').textContent = metricsType + ' Distribution';
+        
+        // 计算所有肌肉的颜色
+        const muscleColors = {};
+        Object.entries(muscleData).forEach(([muscle, value]) => {
+            muscleColors[muscle] = getColorByIntensity(value, muscleData);
+        });
+        
+        // 应用颜色到SVG
+        document.querySelectorAll('.muscle-part').forEach(element => {
+            const muscleName = element.getAttribute('data-muscle');
+            if (muscleName && muscleColors[muscleName]) {
+                element.setAttribute('fill', muscleColors[muscleName]);
+                element.setAttribute('data-value', (muscleData[muscleName] || 0).toFixed(1));
+            }
+        });
+        
+        // 渲染肌肉列表
+        const muscleList = document.getElementById('muscleList');
+        const sortedMuscles = Object.entries(muscleData).sort((a, b) => b[1] - a[1]);
+        
+        sortedMuscles.forEach(([muscle, value]) => {
+            const item = document.createElement('div');
+            item.className = 'muscle-item';
+            
+            const info = document.createElement('div');
+            info.className = 'muscle-info';
+            
+            const colorBox = document.createElement('div');
+            colorBox.className = 'muscle-color-box';
+            colorBox.style.backgroundColor = muscleColors[muscle] || '#ccc';
+            
+            const name = document.createElement('span');
+            name.className = 'muscle-name';
+            name.textContent = muscle;
+            
+            info.appendChild(colorBox);
+            info.appendChild(name);
+            
+            const values = document.createElement('div');
+            values.className = 'muscle-values';
+            
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'muscle-value';
+            valueSpan.textContent = formatValue(value, metricsType);
+            
+            if (previousData && previousData[muscle] !== undefined) {
+                const diff = value - previousData[muscle];
+                if (Math.abs(diff) >= 0.01) {
+                    const formattedDiff = formatValue(Math.abs(diff), metricsType);
+                    const diffText = diff > 0 ? ' (+' + formattedDiff + ')' : ' (-' + formattedDiff + ')';
+                    valueSpan.textContent += diffText;
+                    valueSpan.style.color = diff > 0 ? '#10B981' : '#EF4444';
+                }
+            }
+            
+            values.appendChild(valueSpan);
+            item.appendChild(info);
+            item.appendChild(values);
+            muscleList.appendChild(item);
+        });
+        
+        // Tooltip
+        const tooltip = document.getElementById('muscleTooltip');
+        
+        function showTooltip(muscle, x, y) {
+            if (!fullMuscleData || !fullMuscleData[muscle]) return;
+            const data = fullMuscleData[muscle];
+            let html = '<div class="tooltip-title">' + muscle + '</div>';
+            if (data.sets !== undefined) {
+                html += '<div class="tooltip-row"><span class="tooltip-label">Sets:</span><span class="tooltip-value">' + data.sets.toFixed(1) + '</span></div>';
+            }
+            if (data.volume !== undefined) {
+                html += '<div class="tooltip-row"><span class="tooltip-label">Volume:</span><span class="tooltip-value">' + (data.volume / 1000).toFixed(1) + 'K KG</span></div>';
+            }
+            if (data.workouts !== undefined) {
+                html += '<div class="tooltip-row"><span class="tooltip-label">Workouts:</span><span class="tooltip-value">' + Math.round(data.workouts) + '</span></div>';
+            }
+            tooltip.innerHTML = html;
+            tooltip.style.left = (x + 15) + 'px';
+            tooltip.style.top = (y + 15) + 'px';
+            tooltip.classList.add('visible');
+        }
+        
+        function hideTooltip() {
+            tooltip.classList.remove('visible');
+        }
+        
+        document.querySelectorAll('.muscle-part').forEach(element => {
+            element.addEventListener('mouseenter', (e) => {
+                const muscle = e.target.getAttribute('data-muscle');
+                if (muscle) {
+                    e.target.style.filter = 'brightness(1.15) drop-shadow(0 0 8px rgba(255,255,255,0.5))';
+                    showTooltip(muscle, e.clientX, e.clientY);
+                }
+            });
+            element.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.clientX + 15) + 'px';
+                tooltip.style.top = (e.clientY + 15) + 'px';
+            });
+            element.addEventListener('mouseleave', (e) => {
+                e.target.style.filter = '';
+                hideTooltip();
+            });
+        });
+        
+        console.log('Muscle heatmap initialized, muscles:', Object.keys(muscleData).length);
+    </script>

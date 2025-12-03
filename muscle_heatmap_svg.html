@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Muscle Heatmap</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 16px;
+        }
+        
+        .container {
+            display: flex;
+            gap: 8px;
+            max-width: 1000px;
+            width: 100%;
+            align-items: flex-start;
+        }
+        
+        .body-view {
+            flex: 0 0 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .view-label {
+            font-size: 14px;
+            font-weight: 700;
+            color: #333;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+        
+        .body-svg {
+            width: 100%;
+            max-width: 200px;
+            filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.12));
+        }
+        
+        .muscle-part {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .muscle-part:hover {
+            filter: brightness(1.1);
+            stroke: #ffffff;
+            stroke-width: 3;
+        }
+        
+        .legend {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            /* Tighter max height so legend is more compact */
+            max-height: 420px;
+            height: 420px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .legend-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #333;
+            flex-shrink: 0;
+        }
+        
+        #muscleList {
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .muscle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e8e8e8;
+        }
+        
+        .muscle-item:last-child {
+            border-bottom: none;
+        }
+        
+        .muscle-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+        
+        .muscle-color-box {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+            flex-shrink: 0;
+        }
+        
+        .muscle-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #444;
+            flex: 1;
+        }
+        
+        .muscle-values {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .muscle-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .muscle-diff {
+            font-size: 12px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        
+        .muscle-diff.positive {
+            color: #10B981;
+            background: #D1FAE5;
+        }
+        
+        .muscle-diff.negative {
+            color: #EF4444;
+            background: #FEE2E2;
+        }
+        
+        .muscle-diff.neutral {
+            color: #6b7280;
+            background: #f3f4f6;
+        }
+        
+        .intensity-scale {
+            margin-top: 6px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+            max-width: 1000px;
+            width: 100%;
+        }
+        
+        .scale-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 6px;
+            text-align: center;
+        }
+        
+        .gradient-bar {
+            width: 100%;
+            height: 12px;
+            border-radius: 6px;
+            /* Gray -> Red gradient only for clearer intensity mapping */
+            background: linear-gradient(to right, #9CA3AF, #EF4444);
+            box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+        }
+        
+        .scale-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 6px;
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+        
+        /* Tooltip styles */
+        .muscle-tooltip {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            max-width: 250px;
+        }
+        
+        .muscle-tooltip.show {
+            opacity: 1;
+        }
+        
+        .tooltip-title {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+            padding-bottom: 6px;
+        }
+        
+        .tooltip-metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        
+        .tooltip-metric-label {
+            color: #b0b0b0;
+            margin-right: 12px;
+        }
+        
+        .tooltip-metric-value {
+            font-weight: 600;
+            color: #ffffff;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .legend {
+                flex: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Tooltip for muscle hover -->
+    <div class="muscle-tooltip" id="muscleTooltip"></div>
+    
+    <div class="container">
+        <!-- Front View -->
+        <div class="body-view">
+            <div class="view-label">Front View</div>
+            <svg class="body-svg" viewBox="0 0 200 420" xmlns="http://www.w3.org/2000/svg">
+                <!-- Head & Neck -->
+                <ellipse cx="100" cy="30" rx="18" ry="22" fill="#e0e0e0" stroke="#999" stroke-width="0.8"/>
+                <rect x="95" y="48" width="10" height="12" rx="2" fill="#e0e0e0" stroke="#999" stroke-width="0.8"/>
+                
+                <!-- Shoulders - Deltoids (Front) -->
+                <ellipse id="front-shoulders-left" class="muscle-part" cx="68" cy="72" rx="16" ry="14" fill="#3B82F6" data-muscle="Shoulders"/>
+                <ellipse id="front-shoulders-right" class="muscle-part" cx="132" cy="72" rx="16" ry="14" fill="#3B82F6" data-muscle="Shoulders"/>
+                <path id="front-shoulders-cap-left" class="muscle-part" d="M 60,72 Q 52,80 52,90" stroke="#3B82F6" stroke-width="10" fill="none" stroke-linecap="round" data-muscle="Shoulders"/>
+                <path id="front-shoulders-cap-right" class="muscle-part" d="M 140,72 Q 148,80 148,90" stroke="#3B82F6" stroke-width="10" fill="none" stroke-linecap="round" data-muscle="Shoulders"/>
+                
+                <!-- Chest - Pectorals (More realistic shape) -->
+                <path id="front-chest-left" class="muscle-part" d="M 84,70 Q 72,78 68,90 Q 66,100 70,108 Q 75,113 82,115 L 100,105 L 92,75 Z" fill="#10B981" data-muscle="Chest"/>
+                <path id="front-chest-right" class="muscle-part" d="M 116,70 Q 128,78 132,90 Q 134,100 130,108 Q 125,113 118,115 L 100,105 L 108,75 Z" fill="#10B981" data-muscle="Chest"/>
+                
+                <!-- Biceps (More muscular shape) -->
+                <path id="front-biceps-left" class="muscle-part" d="M 48,88 Q 43,95 43,105 Q 43,115 48,122 Q 53,115 53,105 Q 53,95 48,88 Z" fill="#FBBF24" data-muscle="Biceps"/>
+                <path id="front-biceps-right" class="muscle-part" d="M 152,88 Q 147,95 147,105 Q 147,115 152,122 Q 157,115 157,105 Q 157,95 152,88 Z" fill="#FBBF24" data-muscle="Biceps"/>
+                
+                <!-- Forearms (Tapered shape) -->
+                <path id="front-forearms-left" class="muscle-part" d="M 48,125 Q 46,135 45,145 L 44,158 L 50,158 Q 52,145 52,135 Q 52,125 48,125 Z" fill="#FBBF24" opacity="0.85" data-muscle="Forearms"/>
+                <path id="front-forearms-right" class="muscle-part" d="M 152,125 Q 154,135 155,145 L 156,158 L 150,158 Q 148,145 148,135 Q 148,125 152,125 Z" fill="#FBBF24" opacity="0.85" data-muscle="Forearms"/>
+                
+                <!-- Core - Abdominals (6-pack definition) -->
+                <!-- Replaced three large blocks with six smaller stacked blocks for a 6-pack visual -->
+                <!-- Two-column 6-pack: left and right columns, three rows -->
+                <!-- Enlarged two-column 6-pack (taller and slightly closer columns) -->
+                <path id="front-abs-ul" class="muscle-part" d="M 82,110 L 98,110 Q 99,116 98,122 L 82,122 Q 81,116 82,110 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+                <path id="front-abs-ur" class="muscle-part" d="M 102,110 L 118,110 Q 119,116 118,122 L 102,122 Q 101,116 102,110 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+
+                <!-- middle row shifted down by 4px and bottom row shifted down by 8px to add vertical gaps -->
+                <path id="front-abs-ml" class="muscle-part" d="M 82,126 L 98,126 Q 99,132 98,138 L 82,138 Q 81,132 82,126 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+                <path id="front-abs-mr" class="muscle-part" d="M 102,126 L 118,126 Q 119,132 118,138 L 102,138 Q 101,132 102,126 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+
+                <path id="front-abs-ll" class="muscle-part" d="M 82,142 L 98,142 Q 99,148 98,154 L 82,154 Q 81,148 82,142 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+                <path id="front-abs-lr" class="muscle-part" d="M 102,142 L 118,142 Q 119,148 118,154 L 102,154 Q 101,148 102,142 Z" fill="#a29ca7" data-muscle="Abdominals"></path>
+                
+                <!-- Quadriceps (Muscular thigh shape) -->
+                <path id="front-quads-left" class="muscle-part" d="M 75,180 Q 67,200 66,230 Q 66,260 70,280 Q 80,282 88,280 Q 92,260 92,230 Q 92,200 85,180 Z" fill="#EF4444" data-muscle="Quadriceps"/>
+                <path id="front-quads-right" class="muscle-part" d="M 125,180 Q 133,200 134,230 Q 134,260 130,280 Q 120,282 112,280 Q 108,260 108,230 Q 108,200 115,180 Z" fill="#EF4444" data-muscle="Quadriceps"/>
+                
+                <!-- Calves -->
+                <ellipse id="front-calves-left" class="muscle-part" cx="82" cy="330" rx="11" ry="32" fill="#EF4444" opacity="0.85" data-muscle="Calves"/>
+                <ellipse id="front-calves-right" class="muscle-part" cx="118" cy="330" rx="11" ry="32" fill="#EF4444" opacity="0.85" data-muscle="Calves"/>
+                
+                <!-- Hands -->
+                <ellipse cx="45" cy="168" rx="5" ry="8" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                <ellipse cx="155" cy="168" rx="5" ry="8" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                
+                <!-- Feet -->
+                <ellipse cx="82" cy="370" rx="8" ry="12" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                <ellipse cx="118" cy="370" rx="8" ry="12" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+            </svg>
+        </div>
+        
+        <!-- Back View -->
+        <div class="body-view">
+            <div class="view-label">Back View</div>
+            <svg class="body-svg" viewBox="0 0 200 420" xmlns="http://www.w3.org/2000/svg">
+                <!-- Head & Neck -->
+                <ellipse cx="100" cy="30" rx="18" ry="22" fill="#e0e0e0" stroke="#999" stroke-width="0.8"/>
+                <rect x="95" y="48" width="10" height="12" rx="2" fill="#e0e0e0" stroke="#999" stroke-width="0.8"/>
+                
+                <!-- Traps (Upper Back) -->
+                <path id="back-traps" class="muscle-part" d="M 85,60 L 78,75 L 100,82 L 122,75 L 115,60 Z" fill="#10B981" opacity="0.9" data-muscle="Traps"/>
+                
+                <!-- Shoulders - Deltoids (Rear) -->
+                <ellipse id="back-shoulders-left" class="muscle-part" cx="68" cy="72" rx="16" ry="14" fill="#3B82F6" data-muscle="Shoulders"/>
+                <ellipse id="back-shoulders-right" class="muscle-part" cx="132" cy="72" rx="16" ry="14" fill="#3B82F6" data-muscle="Shoulders"/>
+                
+                <!-- Lats (Wide V-taper shape) -->
+                <path id="back-lats-left" class="muscle-part" d="M 78,82 Q 65,95 60,115 Q 58,130 65,140 L 80,135 L 90,115 L 85,90 Z" fill="#10B981" data-muscle="Lats"/>
+                <path id="back-lats-right" class="muscle-part" d="M 122,82 Q 135,95 140,115 Q 142,130 135,140 L 120,135 L 110,115 L 115,90 Z" fill="#10B981" data-muscle="Lats"/>
+                
+                <!-- Mid Back -->
+                <rect id="back-mid" class="muscle-part" x="88" y="95" width="24" height="35" rx="4" fill="#10B981" opacity="0.85" data-muscle="Upper Back"/>
+                
+                <!-- Triceps (Horseshoe shape) -->
+                <path id="back-triceps-left" class="muscle-part" d="M 50,88 Q 44,95 44,105 Q 44,118 50,126 Q 56,118 56,105 Q 56,95 50,88 Z" fill="#FBBF24" data-muscle="Triceps"/>
+                <path id="back-triceps-right" class="muscle-part" d="M 150,88 Q 144,95 144,105 Q 144,118 150,126 Q 156,118 156,105 Q 156,95 150,88 Z" fill="#FBBF24" data-muscle="Triceps"/>
+                
+                <!-- Forearms (Back) -->
+                <path id="back-forearms-left" class="muscle-part" d="M 50,127 L 47,158 L 54,158 L 54,127 Z" fill="#FBBF24" opacity="0.85" data-muscle="Forearms"/>
+                <path id="back-forearms-right" class="muscle-part" d="M 150,127 L 153,158 L 146,158 L 146,127 Z" fill="#FBBF24" opacity="0.85" data-muscle="Forearms"/>
+                
+                <!-- Lower Back -->
+                <rect id="back-lower" class="muscle-part" x="84" y="135" width="32" height="30" rx="6" fill="#F97316" data-muscle="Lower Back"/>
+                
+                <!-- Glutes (Rounded shape) -->
+                <path id="back-glutes-left" class="muscle-part" d="M 75,172 Q 70,180 70,190 Q 70,200 78,205 Q 88,205 94,200 Q 96,190 96,180 Q 96,172 85,170 Z" fill="#EF4444" opacity="0.9" data-muscle="Glutes"/>
+                <path id="back-glutes-right" class="muscle-part" d="M 125,172 Q 130,180 130,190 Q 130,200 122,205 Q 112,205 106,200 Q 104,190 104,180 Q 104,172 115,170 Z" fill="#EF4444" opacity="0.9" data-muscle="Glutes"/>
+                
+                <!-- Hamstrings (Defined posterior thigh) -->
+                <path id="back-hamstrings-left" class="muscle-part" d="M 72,210 Q 68,230 68,250 Q 68,270 72,285 Q 82,287 90,285 Q 94,270 94,250 Q 94,230 90,210 Z" fill="#EF4444" data-muscle="Hamstrings"/>
+                <path id="back-hamstrings-right" class="muscle-part" d="M 128,210 Q 132,230 132,250 Q 132,270 128,285 Q 118,287 110,285 Q 106,270 106,250 Q 106,230 110,210 Z" fill="#EF4444" data-muscle="Hamstrings"/>
+                
+                <!-- Calves (Back) -->
+                <ellipse id="back-calves-left" class="muscle-part" cx="82" cy="330" rx="13" ry="34" fill="#EF4444" opacity="0.85" data-muscle="Calves"/>
+                <ellipse id="back-calves-right" class="muscle-part" cx="118" cy="330" rx="13" ry="34" fill="#EF4444" opacity="0.85" data-muscle="Calves"/>
+                
+                <!-- Hands -->
+                <ellipse cx="47" cy="168" rx="5" ry="8" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                <ellipse cx="153" cy="168" rx="5" ry="8" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                
+                <!-- Feet -->
+                <ellipse cx="82" cy="370" rx="8" ry="12" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+                <ellipse cx="118" cy="370" rx="8" ry="12" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/>
+            </svg>
+        </div>
+        
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-title" id="metricsTitle">Muscle Groups</div>
+            <div id="muscleList"></div>
+        </div>
+    </div>
+    
+    <!-- Training Intensity Scale (below body views) -->
+    <div class="intensity-scale">
+        <div class="scale-title">Training Intensity</div>
+        <div class="gradient-bar"></div>
+        <div class="scale-labels">
+            <span>Low</span>
+            <span>High</span>
+        </div>
+    </div>
+
+    <script>
+        // 肌肉数据将从 Python 注入（包含当前和上一周期）
+        const muscleData = MUSCLE_DATA_PLACEHOLDER;
+        const previousData = PREVIOUS_DATA_PLACEHOLDER;
+        const metricsType = METRICS_TYPE_PLACEHOLDER;  // 'Workouts', 'Duration', 'Volume', 'Sets'
+        const periodType = PERIOD_TYPE_PLACEHOLDER;    // 'Week', 'Month'
+        const allMetrics = ALL_METRICS_PLACEHOLDER;    // {Sets: {}, Volume: {}, Workouts: {}}
+        
+        // 更新Metrics标题
+        const metricsTitle = document.getElementById('metricsTitle');
+        metricsTitle.textContent = metricsType + ' Distribution';
+        
+        // Tooltip元素
+        const tooltip = document.getElementById('muscleTooltip');
+        
+        // 格式化数值显示
+        function formatValue(value, metrics) {
+            if (metrics === 'Workouts') {
+                return Math.round(value).toString();
+            } else if (metrics === 'Duration') {
+                return (value / 60).toFixed(1) + 'h';
+            } else if (metrics === 'Volume') {
+                return (value / 1000).toFixed(1) + 'K KG';
+            } else if (metrics === 'Sets') {
+                return value.toFixed(1);
+            }
+            return value.toFixed(1);
+        }
+        
+        // 计算颜色（根据Metrics和周期类型自定义）
+        // Week view special rules (user requirements):
+        // - Sets: 0 -> gray; 1-14 -> gradient; >=15 -> red
+        // - Workouts: 0 -> gray; 1-3 -> gradient; >=4 -> red
+        // - Volume: linear gradient (no hard thresholds)
+        function getColorByIntensity(value, allData) {
+            // Gray for explicit zero
+            if (value === 0 || value === 0.0) {
+                return '#9CA3AF'; // Tailwind gray-400
+            }
+
+            // For Week view, apply special thresholds for Sets and Workouts
+            if (periodType === 'Week') {
+                if (metricsType === 'Sets') {
+                    if (value >= 15) {
+                        return '#EF4444'; // strong red
+                    }
+                    // Map 1..14 into 0..1 normalized
+                    const min = 1;
+                    const max = 14;
+                    const t = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
+                    return getGradientColorByT(t);
+                }
+
+                if (metricsType === 'Workouts') {
+                    if (value >= 4) {
+                        return '#EF4444';
+                    }
+                    // Map 1..3 into 0..1
+                    const min = 1;
+                    const max = 3;
+                    const t = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
+                    return getGradientColorByT(t);
+                }
+                // Volume: fall through to linear mapping below
+            }
+
+            // Default linear mapping (use non-zero values to compute range)
+            const values = Object.values(allData).filter(v => v > 0);
+            if (values.length === 0) return '#9CA3AF';
+
+            const max = Math.max(...values);
+            const min = Math.min(...values);
+            const range = max - min || 1;
+            const normalized = (value - min) / range;
+            return getGradientColorByT(normalized);
+        }
+
+        // Helper: map t in [0,1] to the same multi-stop gradient used previously
+        function getGradientColorByT(t) {
+            // Simple gray -> red linear mapping
+            return lerpColor('#9CA3AF', '#EF4444', Math.max(0, Math.min(1, t)));
+        }
+        
+        function lerpColor(color1, color2, t) {
+            const hex1 = color1.replace('#', '');
+            const hex2 = color2.replace('#', '');
+            
+            const r1 = parseInt(hex1.substring(0, 2), 16);
+            const g1 = parseInt(hex1.substring(2, 4), 16);
+            const b1 = parseInt(hex1.substring(4, 6), 16);
+            
+            const r2 = parseInt(hex2.substring(0, 2), 16);
+            const g2 = parseInt(hex2.substring(2, 4), 16);
+            const b2 = parseInt(hex2.substring(4, 6), 16);
+            
+            const r = Math.round(r1 + (r2 - r1) * t);
+            const g = Math.round(g1 + (g2 - g1) * t);
+            const b = Math.round(b1 + (b2 - b1) * t);
+            
+            return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        }
+        
+        // 应用颜色到 SVG（通过 data-muscle 属性）
+        const muscleColors = {};
+        
+        // 先收集所有独特的肌肉数据
+        const allMuscleValues = {};
+        Object.entries(muscleData).forEach(([muscle, value]) => {
+            allMuscleValues[muscle] = value;
+        });
+        
+        // 为每个肌肉计算颜色
+        Object.entries(allMuscleValues).forEach(([muscle, value]) => {
+            muscleColors[muscle] = getColorByIntensity(value, allMuscleValues);
+        });
+        
+        // 应用颜色到所有匹配的 SVG 元素
+        document.querySelectorAll('.muscle-part').forEach(element => {
+            const muscleName = element.getAttribute('data-muscle');
+            if (muscleName && muscleColors[muscleName]) {
+                const color = muscleColors[muscleName];
+                const opacity = element.getAttribute('opacity') || '1';
+
+                // 如果元素有描边(stroke)或stroke-width，确保描边也染色（例如肩膀的cap是stroke路径）
+                const hasStroke = element.getAttribute('stroke') !== null || element.getAttribute('stroke-width') !== null;
+                if (hasStroke) {
+                    element.setAttribute('stroke', color);
+                    // 保留原有 stroke-width 如果存在
+                    const sw = element.getAttribute('stroke-width');
+                    if (sw) element.setAttribute('stroke-width', sw);
+                }
+
+                // 同时设置 fill（若路径是非封闭或 fill="none"，fill 不会造成明显填充问题）
+                element.setAttribute('fill', color);
+
+                if (opacity !== '1') {
+                    element.setAttribute('opacity', opacity);
+                }
+
+                // 将聚合值写回元素，方便 tooltip 等读取
+                element.setAttribute('data-value', (allMuscleValues[muscleName] || 0).toFixed(1));
+            }
+        });
+        
+        // 更新图例（按值排序，从大到小）
+        const muscleList = document.getElementById('muscleList');
+        const sortedMuscles = Object.entries(muscleData).sort((a, b) => b[1] - a[1]);
+        
+        sortedMuscles.forEach(([muscle, value]) => {
+            const item = document.createElement('div');
+            item.className = 'muscle-item';
+            
+            const info = document.createElement('div');
+            info.className = 'muscle-info';
+            
+            const colorBox = document.createElement('div');
+            colorBox.className = 'muscle-color-box';
+            colorBox.style.backgroundColor = muscleColors[muscle] || '#ccc';
+            
+            const name = document.createElement('span');
+            name.className = 'muscle-name';
+            name.textContent = muscle;
+            
+            info.appendChild(colorBox);
+            info.appendChild(name);
+            
+            const values = document.createElement('div');
+            values.className = 'muscle-values';
+            
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'muscle-value';
+            
+            // 添加对比数据（格式：当前值 (+/-变化值)）
+            if (previousData && previousData[muscle] !== undefined) {
+                const diff = value - previousData[muscle];
+                const formattedValue = formatValue(value, metricsType);
+                const formattedDiff = formatValue(Math.abs(diff), metricsType);
+                
+                let diffText = '';
+                if (Math.abs(diff) < 0.01) {
+                    diffText = '(±0)';
+                } else if (diff > 0) {
+                    diffText = '(+' + formattedDiff + ')';
+                } else {
+                    diffText = '(-' + formattedDiff + ')';
+                }
+                
+                valueSpan.textContent = formattedValue + ' ' + diffText;
+                
+                // 添加颜色类
+                if (Math.abs(diff) < 0.01) {
+                    valueSpan.style.color = '#6b7280';
+                } else if (diff > 0) {
+                    valueSpan.style.color = '#10B981';
+                } else {
+                    valueSpan.style.color = '#EF4444';
+                }
+            } else {
+                valueSpan.textContent = formatValue(value, metricsType);
+            }
+            
+            values.appendChild(valueSpan);
+            
+            item.appendChild(info);
+            item.appendChild(values);
+            muscleList.appendChild(item);
+        });
+        
+        // 格式化tooltip中的数值
+        function formatTooltipValue(value, metricType) {
+            if (metricType === 'Workouts') {
+                return Math.round(value).toString();
+            } else if (metricType === 'Volume') {
+                return (value / 1000).toFixed(1) + 'K KG';
+            } else if (metricType === 'Sets') {
+                return value.toFixed(1);
+            }
+            return value.toFixed(1);
+        }
+        
+        // 显示tooltip
+        function showTooltip(muscle, x, y) {
+            if (!allMetrics || !muscle) return;
+            
+            let tooltipHTML = '<div class="tooltip-title">' + muscle + '</div>';
+            
+            // 添加 Workouts
+            if (allMetrics.Workouts && allMetrics.Workouts[muscle] !== undefined) {
+                const workouts = allMetrics.Workouts[muscle];
+                tooltipHTML += '<div class="tooltip-metric">';
+                tooltipHTML += '<span class="tooltip-metric-label">Workouts:</span>';
+                tooltipHTML += '<span class="tooltip-metric-value">' + formatTooltipValue(workouts, 'Workouts') + '</span>';
+                tooltipHTML += '</div>';
+            }
+            
+            // 添加 Sets
+            if (allMetrics.Sets && allMetrics.Sets[muscle] !== undefined) {
+                const sets = allMetrics.Sets[muscle];
+                tooltipHTML += '<div class="tooltip-metric">';
+                tooltipHTML += '<span class="tooltip-metric-label">Sets:</span>';
+                tooltipHTML += '<span class="tooltip-metric-value">' + formatTooltipValue(sets, 'Sets') + '</span>';
+                tooltipHTML += '</div>';
+            }
+            
+            // 添加 Volume
+            if (allMetrics.Volume && allMetrics.Volume[muscle] !== undefined) {
+                const volume = allMetrics.Volume[muscle];
+                tooltipHTML += '<div class="tooltip-metric">';
+                tooltipHTML += '<span class="tooltip-metric-label">Volume:</span>';
+                tooltipHTML += '<span class="tooltip-metric-value">' + formatTooltipValue(volume, 'Volume') + '</span>';
+                tooltipHTML += '</div>';
+            }
+            
+            tooltip.innerHTML = tooltipHTML;
+            tooltip.style.left = (x + 15) + 'px';
+            tooltip.style.top = (y + 15) + 'px';
+            tooltip.classList.add('show');
+        }
+        
+        // 隐藏tooltip
+        function hideTooltip() {
+            tooltip.classList.remove('show');
+        }
+        
+        // 添加悬停提示
+        document.querySelectorAll('.muscle-part').forEach(element => {
+            element.addEventListener('mouseenter', (e) => {
+                const muscle = e.target.getAttribute('data-muscle');
+                const value = e.target.getAttribute('data-value');
+                if (muscle && value) {
+                    e.target.style.filter = 'brightness(1.15) drop-shadow(0 0 8px rgba(255,255,255,0.5))';
+                    e.target.style.transition = 'all 0.2s ease';
+                    showTooltip(muscle, e.clientX, e.clientY);
+                }
+            });
+            
+            element.addEventListener('mousemove', (e) => {
+                const muscle = e.target.getAttribute('data-muscle');
+                if (muscle) {
+                    tooltip.style.left = (e.clientX + 15) + 'px';
+                    tooltip.style.top = (e.clientY + 15) + 'px';
+                }
+            });
+            
+            element.addEventListener('mouseleave', (e) => {
+                e.target.style.filter = '';
+                hideTooltip();
+            });
+        });
+    </script>
+</body>
+</html>

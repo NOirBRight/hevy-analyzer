@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Floating View Mode Control</title>
+    <style>
+        :root {
+            font-family: "Source Sans", "Inter", sans-serif;
+        }
+        body {
+            margin: 0;
+            font-family: inherit;
+            color: #0b0f18;
+            background: transparent;
+        }
+        #root {
+            padding: 0;
+            margin: 0;
+        }
+        .floating-inline-select-shell {
+            position: relative;
+            border-radius: 12px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            background: #ffffff;
+            padding: 0.15rem 0.6rem;
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+        }
+        .floating-inline-select-label {
+            position: absolute;
+            top: 0.22rem;
+            left: 0.55rem;
+            font-size: 0.52rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #8a8fa4;
+            font-weight: 600;
+            pointer-events: none;
+        }
+        .floating-inline-select-shell.no-label {
+            padding: 0.1rem 0.6rem;
+        }
+        select.floating-panel-select {
+            width: 100%;
+            border: none;
+            background: transparent;
+            padding: 0.2rem 1.4rem 0.2rem 0;
+            font-weight: 600;
+            font-size: 0.82rem;
+            color: #111728;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%230b0f18' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.05rem center;
+            background-size: 9px 9px;
+        }
+        select.floating-panel-select:focus {
+            outline: none;
+        }
+        select.floating-panel-select option {
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script>
+        const StreamlitShim = (() => {
+            const RENDER_EVENT = "streamlit:render";
+            const COMPONENT_READY = "streamlit:componentReady";
+            const SET_COMPONENT_VALUE = "streamlit:setComponentValue";
+            const SET_FRAME_HEIGHT = "streamlit:setFrameHeight";
+            const events = new EventTarget();
+            let lastHeight = null;
+
+            function postMessageToStreamlit(type, payload) {
+                const message = { isStreamlitMessage: true, type, ...payload };
+                window.parent.postMessage(message, "*");
+            }
+
+            function setComponentReady() {
+                postMessageToStreamlit(COMPONENT_READY, { apiVersion: 1 });
+            }
+
+            function setFrameHeight(height) {
+                const newHeight = height ?? document.body.scrollHeight;
+                if (newHeight === lastHeight) {
+                    return;
+                }
+                lastHeight = newHeight;
+                postMessageToStreamlit(SET_FRAME_HEIGHT, { height: newHeight });
+            }
+
+            function setComponentValue(value) {
+                postMessageToStreamlit(SET_COMPONENT_VALUE, {
+                    value,
+                    dataType: "json",
+                });
+            }
+
+            function handleRenderMessage(data) {
+                const args = data.args || {};
+                const detail = {
+                    args,
+                    disabled: Boolean(data.disabled),
+                    theme: data.theme || null,
+                };
+                const event = new CustomEvent(RENDER_EVENT, { detail });
+                events.dispatchEvent(event);
+            }
+
+            function handleMessage(event) {
+                const payload = event.data;
+                if (!payload || payload.type !== RENDER_EVENT) {
+                    return;
+                }
+                if (payload.type === RENDER_EVENT) {
+                    handleRenderMessage(payload);
+                }
+            }
+
+            window.addEventListener("message", handleMessage);
+
+            return {
+                events,
+                setComponentReady,
+                setFrameHeight,
+                setComponentValue,
+                RENDER_EVENT,
+            };
+        })();
+
+        const root = document.getElementById("root");
+        let currentValue = null;
+
+        function render(event) {
+            const {
+                value = "Week",
+                options = ["Week", "Month"],
+                label = "View Mode",
+                showLabel = true,
+            } = event.detail.args || {};
+            currentValue = value;
+
+            const optionsMarkup = (options || [])
+                .map((opt) => `<option value="${opt}">${opt}</option>`)
+                .join("");
+
+            const shellClass = showLabel ? "floating-inline-select-shell" : "floating-inline-select-shell no-label";
+            const labelMarkup = showLabel
+                ? `<span class="floating-inline-select-label">${label.toUpperCase()}</span>`
+                : "";
+
+            root.innerHTML = `
+                <div class="${shellClass}">
+                    ${labelMarkup}
+                    <select class="floating-panel-select" id="floating-component-select">
+                        ${optionsMarkup}
+                    </select>
+                </div>
+            `;
+
+            const selectEl = document.getElementById("floating-component-select");
+            if (selectEl) {
+                selectEl.value = value;
+                selectEl.addEventListener("change", () => {
+                    const newValue = selectEl.value;
+                    if (newValue !== currentValue) {
+                        currentValue = newValue;
+                        StreamlitShim.setComponentValue(newValue);
+                    }
+                });
+            }
+
+            StreamlitShim.setFrameHeight(root.scrollHeight);
+        }
+
+        StreamlitShim.events.addEventListener(StreamlitShim.RENDER_EVENT, render);
+        StreamlitShim.setComponentReady();
+        StreamlitShim.setFrameHeight(60);
+    </script>
+</body>
+</html>

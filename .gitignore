@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local settings
+.remembered_api_key.json
+.user_preferences.json
+custom_exercises.csv
+
+# Test files
+test_*.html
+test_*.py
+
+# Build artifacts
+*.spec
+*.exe
+
+# Other
+*.log
+.DS_Store
+Thumbs.db

@@ -21,7 +21,7 @@ A powerful workout data analysis tool for [Hevy](https://hevy.com/) users. Visua
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/hevy-analyzer.git
+git clone https://github.com/NOirBRight/hevy-analyzer.git
 cd hevy-analyzer
 ```
 
@@ -39,7 +39,7 @@ streamlit run app.py
 
 ### Option 2: Windows Executable
 
-Download the latest release from the [Releases](https://github.com/YOUR_USERNAME/hevy-analyzer/releases) page and run `HevyAnalyzer.exe`.
+Download the latest release from the [Releases](https://github.com/NOirBRight/hevy-analyzer/releases) page and run `HevyAnalyzer.exe`.
 
 ## 📦 Requirements
 
@@ -89,7 +89,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📧 Contact
 
-For issues and feature requests, please use the [GitHub Issues](https://github.com/YOUR_USERNAME/hevy-analyzer/issues) page.
+For issues and feature requests, please use the [GitHub Issues](https://github.com/NOirBRight/hevy-analyzer/issues) page.
 
 ---
 

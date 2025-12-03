@@ -22,6 +22,9 @@ echo.
 echo Copying required files to dist folder...
 copy /Y app.py dist\HevyAnalyzer\
 copy /Y exercises.csv dist\HevyAnalyzer\
+copy /Y muscle_heatmap_svg.html dist\HevyAnalyzer\
+copy /Y muscle_heatmap_3d.html dist\HevyAnalyzer\
+copy /Y muscle_heatmap_svg_backup.html dist\HevyAnalyzer\
 
 echo.
 if exist "dist\HevyAnalyzer\HevyAnalyzer.exe" (

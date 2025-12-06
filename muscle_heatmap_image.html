@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Muscle Heatmap</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 10px;
+            gap: 10px;
+        }
+        
+        .main-container {
+            display: flex;
+            gap: 16px;
+            max-width: 1200px;
+            width: 100%;
+            align-items: flex-start;
+        }
+        
+        .body-container {
+            position: relative;
+            flex: 0 0 auto;
+        }
+        
+        .body-image {
+            width: 480px;
+            height: auto;
+            display: block;
+        }
+        
+        /* Overlay container for heat zones */
+        .heat-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        /* Individual muscle heat zone */
+        .heat-zone {
+            position: absolute;
+            border-radius: 40%;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            opacity: 0;
+            /* 使用柔和的渐变边缘 */
+            box-shadow: inset 0 0 10px rgba(255,255,255,0.3);
+        }
+        
+        .heat-zone:hover {
+            transform: scale(1.05);
+            z-index: 100;
+            filter: brightness(1.2);
+        }
+        
+        .heat-zone.active {
+            opacity: 0.55;
+        }
+        
+        /* Legend panel */
+        .legend {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            max-height: 500px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .legend-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #333;
+            flex-shrink: 0;
+        }
+        
+        #muscleList {
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .muscle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e8e8e8;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .muscle-item:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        
+        .muscle-item:last-child {
+            border-bottom: none;
+        }
+        
+        .muscle-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .muscle-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        
+        .muscle-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .muscle-value {
+            font-size: 13px;
+            font-weight: 700;
+            color: #333;
+        }
+        
+        .muscle-change {
+            font-size: 11px;
+            margin-left: 6px;
+        }
+        
+        .change-up { color: #22c55e; }
+        .change-down { color: #ef4444; }
+        .change-same { color: #9ca3af; }
+        
+        /* Gradient bar */
+        .gradient-bar-container {
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid #e8e8e8;
+        }
+        
+        .gradient-bar {
+            height: 12px;
+            border-radius: 6px;
+            background: linear-gradient(to right, #e8f5e9, #a5d6a7, #66bb6a, #fdd835, #fb8c00, #f4511e, #c62828);
+        }
+        
+        .gradient-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            font-size: 11px;
+            color: #666;
+        }
+        
+        /* Tooltip */
+        .tooltip {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            max-width: 200px;
+        }
+        
+        .tooltip-title {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .tooltip-value {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+        
+        /* Metric selector */
+        .metric-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .metric-btn {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 16px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .metric-btn:hover {
+            border-color: #666;
+        }
+        
+        .metric-btn.active {
+            background: #333;
+            color: white;
+            border-color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="body-container">
+            <img src="data:image/png;base64,BODY_IMAGE_PLACEHOLDER" alt="Muscle Anatomy" class="body-image" id="bodyImage">
+            <div class="heat-overlay" id="heatOverlay">
+                <!-- Heat zones will be generated dynamically -->
+            </div>
+        </div>
+        
+        <div class="legend">
+            <div class="metric-selector" id="metricSelector">
+                <button class="metric-btn active" data-metric="Sets">Sets</button>
+                <button class="metric-btn" data-metric="Reps">Reps</button>
+                <button class="metric-btn" data-metric="Volume">Volume</button>
+                <button class="metric-btn" data-metric="Duration">Duration</button>
+            </div>
+            
+            <div class="legend-title">Muscle Activity</div>
+            <div id="muscleList"></div>
+            
+            <div class="gradient-bar-container">
+                <div class="gradient-bar"></div>
+                <div class="gradient-labels">
+                    <span>Low</span>
+                    <span>Medium</span>
+                    <span>High</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip">
+        <div class="tooltip-title"></div>
+        <div class="tooltip-value"></div>
+    </div>
+
+    <script>
+        // Data placeholders (will be replaced by Python)
+        const muscleData = MUSCLE_DATA_PLACEHOLDER;
+        const previousData = PREVIOUS_DATA_PLACEHOLDER;
+        const currentMetric = METRICS_TYPE_PLACEHOLDER;
+        const periodType = PERIOD_TYPE_PLACEHOLDER;
+        const allMetricsData = ALL_METRICS_PLACEHOLDER;
+        
+        let activeMetric = currentMetric;
+        
+        // Muscle zone definitions - coordinates are percentages relative to image
+        // Format: { muscle: { front: [{x, y, w, h}], back: [{x, y, w, h}] } }
+        // x, y are center positions as percentage of image width/height
+        // The image has front view on left half (0-50%) and back view on right half (50-100%)
+        // 图片比例约为 816:979，左右两个人体各占一半
+        // 前视图人体中心约在 x=24.5%，后视图人体中心约在 x=74%
+        
+        const muscleZones = {
+            // ===== 前视图肌肉 (图片左半部分: 0-50%) =====
+            // 人体中心线约在 x=24.5%
+            "Chest": { 
+                front: [
+                    { x: 20.5, y: 22.5, w: 7, h: 5 },  // 左胸
+                    { x: 28.5, y: 22.5, w: 7, h: 5 }   // 右胸
+                ]
+            },
+            "Abdominals": { 
+                front: [
+                    { x: 24.5, y: 32, w: 6, h: 10 }  // 腹肌（中心位置，较窄）
+                ]
+            },
+            "Obliques": { 
+                front: [
+                    { x: 19, y: 32, w: 4, h: 8 },  // 左侧腹
+                    { x: 30, y: 32, w: 4, h: 8 }   // 右侧腹
+                ]
+            },
+            "Shoulders": { 
+                front: [
+                    { x: 15, y: 19, w: 5, h: 5 },  // 左前三角
+                    { x: 34, y: 19, w: 5, h: 5 }   // 右前三角
+                ],
+                back: [
+                    { x: 64.5, y: 18, w: 5, h: 5 },  // 左后三角
+                    { x: 83.5, y: 18, w: 5, h: 5 }   // 右后三角
+                ]
+            },
+            "Biceps": { 
+                front: [
+                    { x: 13, y: 28, w: 4, h: 6 },  // 左二头
+                    { x: 36, y: 28, w: 4, h: 6 }   // 右二头
+                ]
+            },
+            "Triceps": { 
+                front: [
+                    { x: 14, y: 27, w: 3.5, h: 5 },  // 左三头（前视图可见部分）
+                    { x: 35, y: 27, w: 3.5, h: 5 }   // 右三头
+                ],
+                back: [
+                    { x: 62.5, y: 27, w: 4, h: 6 },  // 左三头背面
+                    { x: 85.5, y: 27, w: 4, h: 6 }   // 右三头背面
+                ]
+            },
+            "Forearms": { 
+                front: [
+                    { x: 11.5, y: 37, w: 3.5, h: 8 },   // 左前臂
+                    { x: 37.5, y: 37, w: 3.5, h: 8 }    // 右前臂
+                ],
+                back: [
+                    { x: 60.5, y: 37, w: 3.5, h: 8 },  // 左前臂背面
+                    { x: 87.5, y: 37, w: 3.5, h: 8 }   // 右前臂背面
+                ]
+            },
+            "Quadriceps": { 
+                front: [
+                    { x: 21, y: 52, w: 6, h: 12 }, // 左股四头
+                    { x: 28, y: 52, w: 6, h: 12 }  // 右股四头
+                ]
+            },
+            "Adductors": { 
+                front: [
+                    { x: 23.5, y: 48, w: 3, h: 8 }, // 左内收肌（大腿内侧）
+                    { x: 25.5, y: 48, w: 3, h: 8 }  // 右内收肌
+                ]
+            },
+            "Calves": { 
+                front: [
+                    { x: 20.5, y: 72, w: 4, h: 9 }, // 左小腿前
+                    { x: 28.5, y: 72, w: 4, h: 9 }  // 右小腿前
+                ],
+                back: [
+                    { x: 70, y: 72, w: 4.5, h: 9 }, // 左小腿后
+                    { x: 78, y: 72, w: 4.5, h: 9 }  // 右小腿后
+                ]
+            },
+            
+            // ===== 后视图肌肉 (图片右半部分: 50-100%) =====
+            // 人体中心线约在 x=74%
+            "Traps": { 
+                front: [
+                    { x: 24.5, y: 16, w: 8, h: 4 }  // 斜方肌前视图
+                ],
+                back: [
+                    { x: 74, y: 15, w: 10, h: 5 }  // 斜方肌后视图
+                ]
+            },
+            "Lats": { 
+                back: [
+                    { x: 67, y: 28, w: 6, h: 10 }, // 左背阔肌
+                    { x: 81, y: 28, w: 6, h: 10 }  // 右背阔肌
+                ]
+            },
+            "Lower Back": { 
+                back: [
+                    { x: 74, y: 38, w: 8, h: 6 }   // 下背部
+                ]
+            },
+            "Glutes": { 
+                front: [
+                    { x: 21.5, y: 43, w: 5, h: 5 },  // 左臀前视图（髋部侧面）
+                    { x: 27.5, y: 43, w: 5, h: 5 }   // 右臀前视图
+                ],
+                back: [
+                    { x: 70.5, y: 44, w: 6, h: 6 },  // 左臀后视图
+                    { x: 77.5, y: 44, w: 6, h: 6 }   // 右臀后视图
+                ]
+            },
+            "Hamstrings": { 
+                back: [
+                    { x: 70, y: 56, w: 5.5, h: 12 }, // 左腘绳肌
+                    { x: 78, y: 56, w: 5.5, h: 12 }  // 右腘绳肌
+                ]
+            },
+            "Neck": {
+                front: [
+                    { x: 24.5, y: 11, w: 4, h: 3 }
+                ],
+                back: [
+                    { x: 74, y: 9.5, w: 5, h: 3.5 }
+                ]
+            }
+        };
+        
+        // Color scale function
+        function getHeatColor(value, maxValue) {
+            if (!value || value <= 0) return 'rgba(200, 200, 200, 0.3)';
+            
+            const ratio = Math.min(value / maxValue, 1);
+            
+            // Color stops: green -> yellow -> orange -> red
+            const colors = [
+                { pos: 0, r: 200, g: 230, b: 200 },    // Light green
+                { pos: 0.25, r: 102, g: 187, b: 106 }, // Green
+                { pos: 0.5, r: 253, g: 216, b: 53 },   // Yellow
+                { pos: 0.75, r: 251, g: 140, b: 0 },   // Orange
+                { pos: 1, r: 198, g: 40, b: 40 }       // Red
+            ];
+            
+            let lower = colors[0], upper = colors[colors.length - 1];
+            for (let i = 0; i < colors.length - 1; i++) {
+                if (ratio >= colors[i].pos && ratio <= colors[i + 1].pos) {
+                    lower = colors[i];
+                    upper = colors[i + 1];
+                    break;
+                }
+            }
+            
+            const range = upper.pos - lower.pos;
+            const factor = range > 0 ? (ratio - lower.pos) / range : 0;
+            
+            const r = Math.round(lower.r + (upper.r - lower.r) * factor);
+            const g = Math.round(lower.g + (upper.g - lower.g) * factor);
+            const b = Math.round(lower.b + (upper.b - lower.b) * factor);
+            
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+        
+        // Get current data based on active metric
+        function getCurrentData() {
+            return allMetricsData[activeMetric] || muscleData;
+        }
+        
+        // Create heat zones
+        function createHeatZones() {
+            const overlay = document.getElementById('heatOverlay');
+            overlay.innerHTML = '';
+            
+            const data = getCurrentData();
+            const values = Object.values(data).filter(v => v > 0);
+            const maxValue = values.length > 0 ? Math.max(...values) : 1;
+            
+            for (const [muscle, zones] of Object.entries(muscleZones)) {
+                const value = data[muscle] || 0;
+                const color = getHeatColor(value, maxValue);
+                
+                // Create zones for front view
+                if (zones.front) {
+                    zones.front.forEach((zone, idx) => {
+                        createZone(muscle, zone, color, value, `front-${idx}`);
+                    });
+                }
+                
+                // Create zones for back view
+                if (zones.back) {
+                    zones.back.forEach((zone, idx) => {
+                        createZone(muscle, zone, color, value, `back-${idx}`);
+                    });
+                }
+            }
+        }
+        
+        function createZone(muscle, zone, color, value, suffix) {
+            const overlay = document.getElementById('heatOverlay');
+            const div = document.createElement('div');
+            div.className = 'heat-zone' + (value > 0 ? ' active' : '');
+            div.dataset.muscle = muscle;
+            div.dataset.value = value;
+            
+            // Position as percentage
+            div.style.left = `${zone.x - zone.w/2}%`;
+            div.style.top = `${zone.y - zone.h/2}%`;
+            div.style.width = `${zone.w}%`;
+            div.style.height = `${zone.h}%`;
+            div.style.backgroundColor = color;
+            
+            // Event listeners
+            div.addEventListener('mouseenter', (e) => showTooltip(e, muscle, value));
+            div.addEventListener('mouseleave', hideTooltip);
+            div.addEventListener('mousemove', moveTooltip);
+            
+            overlay.appendChild(div);
+        }
+        
+        // Tooltip functions
+        function showTooltip(e, muscle, value) {
+            const tooltip = document.getElementById('tooltip');
+            const prevValue = previousData ? previousData[muscle] : null;
+            
+            tooltip.querySelector('.tooltip-title').textContent = muscle;
+            
+            let valueText = formatValue(value);
+            if (prevValue !== null && prevValue !== undefined) {
+                const change = value - prevValue;
+                const changeText = change > 0 ? `+${formatValue(change)}` : formatValue(change);
+                const changeClass = change > 0 ? 'change-up' : (change < 0 ? 'change-down' : 'change-same');
+                valueText += ` <span class="${changeClass}">(${changeText})</span>`;
+            }
+            
+            tooltip.querySelector('.tooltip-value').innerHTML = `${activeMetric}: ${valueText}`;
+            tooltip.style.display = 'block';
+            moveTooltip(e);
+        }
+        
+        function moveTooltip(e) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.left = (e.clientX + 15) + 'px';
+            tooltip.style.top = (e.clientY + 15) + 'px';
+        }
+        
+        function hideTooltip() {
+            document.getElementById('tooltip').style.display = 'none';
+        }
+        
+        // Format value based on metric
+        function formatValue(value) {
+            if (value === null || value === undefined) return '0';
+            if (activeMetric === 'Duration') {
+                const mins = Math.floor(value / 60);
+                const secs = Math.round(value % 60);
+                return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            }
+            if (activeMetric === 'Volume') {
+                return value >= 1000 ? `${(value/1000).toFixed(1)}k` : value.toFixed(0);
+            }
+            return Math.round(value).toLocaleString();
+        }
+        
+        // Update legend
+        function updateLegend() {
+            const list = document.getElementById('muscleList');
+            list.innerHTML = '';
+            
+            const data = getCurrentData();
+            const prevData = previousData || {};
+            const values = Object.values(data).filter(v => v > 0);
+            const maxValue = values.length > 0 ? Math.max(...values) : 1;
+            
+            // Sort muscles by value
+            const sortedMuscles = Object.entries(data)
+                .filter(([_, v]) => v > 0)
+                .sort((a, b) => b[1] - a[1]);
+            
+            for (const [muscle, value] of sortedMuscles) {
+                const color = getHeatColor(value, maxValue);
+                const prevValue = prevData[muscle];
+                
+                const item = document.createElement('div');
+                item.className = 'muscle-item';
+                
+                let changeHtml = '';
+                if (prevValue !== null && prevValue !== undefined) {
+                    const change = value - prevValue;
+                    if (change !== 0) {
+                        const changeClass = change > 0 ? 'change-up' : 'change-down';
+                        const arrow = change > 0 ? '↑' : '↓';
+                        changeHtml = `<span class="muscle-change ${changeClass}">${arrow}${Math.abs(Math.round(change))}</span>`;
+                    }
+                }
+                
+                item.innerHTML = `
+                    <div class="muscle-info">
+                        <div class="muscle-color" style="background: ${color}"></div>
+                        <span class="muscle-name">${muscle}</span>
+                    </div>
+                    <div>
+                        <span class="muscle-value">${formatValue(value)}</span>
+                        ${changeHtml}
+                    </div>
+                `;
+                
+                // Hover to highlight zones
+                item.addEventListener('mouseenter', () => highlightMuscle(muscle, true));
+                item.addEventListener('mouseleave', () => highlightMuscle(muscle, false));
+                
+                list.appendChild(item);
+            }
+            
+            // Show message if no data
+            if (sortedMuscles.length === 0) {
+                list.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No muscle data for this period</div>';
+            }
+        }
+        
+        function highlightMuscle(muscle, highlight) {
+            document.querySelectorAll('.heat-zone').forEach(zone => {
+                if (zone.dataset.muscle === muscle) {
+                    zone.style.transform = highlight ? 'scale(1.15)' : '';
+                    zone.style.zIndex = highlight ? '100' : '';
+                    zone.style.opacity = highlight ? '0.85' : '';
+                }
+            });
+        }
+        
+        // Metric selector
+        function initMetricSelector() {
+            const buttons = document.querySelectorAll('.metric-btn');
+            buttons.forEach(btn => {
+                if (btn.dataset.metric === activeMetric) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+                
+                btn.addEventListener('click', () => {
+                    buttons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    activeMetric = btn.dataset.metric;
+                    createHeatZones();
+                    updateLegend();
+                });
+            });
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initMetricSelector();
+            createHeatZones();
+            updateLegend();
+        });
+    </script>
+</body>
+</html>

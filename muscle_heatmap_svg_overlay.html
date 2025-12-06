@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Muscle Heatmap - SVG Overlay</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            background: #ffffff !important;
+            background-color: #ffffff !important;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            min-height: auto;
+            padding: 5px;
+            gap: 5px;
+        }
+        
+        .main-container {
+            display: flex;
+            gap: 8px;
+            max-width: 100%;
+            width: 100%;
+            align-items: stretch;
+            height: 420px;
+            background: #ffffff;
+        }
+        
+        .body-container {
+            position: relative;
+            flex: 1 1 auto;
+            min-width: 0;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff;
+        }
+        
+        .body-image {
+            max-width: 100%;
+            max-height: 100%;
+            height: auto;
+            width: auto;
+            display: block;
+            object-fit: contain;
+            /* Remove gray background from image */
+            mix-blend-mode: multiply;
+            filter: brightness(1.05) contrast(1.02);
+        }
+        
+        /* SVG overlay */
+        .svg-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .muscle-path {
+            pointer-events: auto;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            opacity: 0;
+            stroke: none;
+            stroke-width: 0;
+        }
+        
+        .muscle-path.active {
+            opacity: 1;
+        }
+        
+        .muscle-path:hover {
+            filter: brightness(1.2);
+        }
+        
+        /* Legend panel */
+        .legend {
+            flex: 0 0 260px;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            height: 100%;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .legend-title {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #333;
+            flex-shrink: 0;
+        }
+        
+        #muscleList {
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .muscle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid #e8e8e8;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .muscle-item:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        
+        .muscle-item:last-child {
+            border-bottom: none;
+        }
+        
+        .muscle-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .muscle-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        
+        .muscle-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .muscle-value {
+            font-size: 13px;
+            font-weight: 700;
+            color: #333;
+            min-width: 32px;
+            text-align: right;
+            display: inline-block;
+        }
+        
+        .muscle-change {
+            font-size: 11px;
+            margin-left: 8px;
+            min-width: 28px;
+            display: inline-block;
+        }
+        
+        .change-up { color: #22c55e; }
+        .change-down { color: #ef4444; }
+        .change-same { color: #9ca3af; }
+        
+        /* Gradient bar */
+        .gradient-bar-container {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid #e8e8e8;
+            flex-shrink: 0;
+        }
+        
+        .gradient-bar {
+            height: 10px;
+            border-radius: 5px;
+            /* Light blue to dark blue gradient matching getHeatColor */
+            background: linear-gradient(to right, rgb(220, 235, 250), rgb(143, 184, 235), rgb(66, 133, 220));
+        }
+        
+        .gradient-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 3px;
+            font-size: 9px;
+            color: #666;
+        }
+        
+        /* Tooltip */
+        .tooltip {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            max-width: 200px;
+        }
+        
+        .tooltip-title {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .tooltip-value {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="body-container">
+            <img src="data:image/png;base64,BODY_IMAGE_PLACEHOLDER" alt="Muscle Anatomy" class="body-image" id="bodyImage">
+            
+            <!-- SVG Overlay with muscle paths -->
+            <!-- ViewBox matches muscle_anatomy.png actual dimensions (2130x2011) -->
+            <svg class="svg-overlay" id="svgOverlay" viewBox="0 0 2130 2011" preserveAspectRatio="xMidYMid meet">
+                <!-- ========== 正面 (Front View) ========== -->
+                
+                <!-- 肩膀 Shoulders -->
+                <path class="muscle-path" data-muscle="Shoulders" d="M219,516 L224,543 L231,564 L241,596 L261,571 L282,550 L301,534 L325,516 L325,493 L329,471 L340,449 L359,431 L386,418 L422,403 L382,398 L362,392 L338,389 L310,395 L289,406 L268,423 L249,443 L238,462 L228,489 Z"/>
+                <path class="muscle-path" data-muscle="Shoulders" d="M597,399 L626,399 L654,393 L676,388 L698,390 L723,399 L752,420 L772,444 L790,481 L802,514 L794,539 L788,564 L784,584 L782,604 L757,568 L739,550 L713,529 L691,517 L687,490 L678,464 L670,445 L654,429 L631,414 Z"/>
+                
+                <!-- 胸肌 Chest -->
+                <path class="muscle-path" data-muscle="Chest" d="M448,400 L471,402 L484,418 L490,435 L496,457 L499,484 L500,508 L498,534 L488,560 L468,581 L431,593 L396,596 L367,587 L353,569 L338,534 L327,519 L327,495 L331,471 L344,446 L364,429 L389,416 L416,405 Z"/>
+                <path class="muscle-path" data-muscle="Chest" d="M534,406 L524,424 L520,445 L515,479 L514,508 L517,537 L524,561 L542,577 L574,590 L604,594 L638,591 L667,575 L677,546 L688,517 L687,494 L679,470 L672,452 L657,431 L641,420 L619,407 L593,399 L574,395 L550,397 Z"/>
+                
+                <!-- 二头肌 Biceps -->
+                <path class="muscle-path" data-muscle="Biceps" d="M325,518 L332,527 L335,536 L331,556 L324,581 L312,617 L288,679 L265,714 L226,750 L216,729 L214,702 L218,676 L230,627 L238,602 L271,560 L293,542 Z"/>
+                <path class="muscle-path" data-muscle="Biceps" d="M692,520 L683,534 L696,574 L705,605 L715,636 L727,666 L747,703 L762,720 L780,740 L794,748 L805,729 L803,708 L798,674 L790,639 L784,611 L775,592 L756,568 L732,545 L713,529 Z"/>
+                
+                <!-- 三头肌 Triceps (正面) -->
+                <path class="muscle-path" data-muscle="Triceps" d="M217,518 L200,528 L186,544 L177,563 L171,579 L169,593 L169,610 L158,632 L153,658 L150,691 L154,713 L172,672 L178,657 L190,625 L195,656 L199,670 L205,687 L214,703 L218,673 L224,647 L230,623 L240,598 L234,581 L228,562 L222,537 Z"/>
+                <path class="muscle-path" data-muscle="Triceps" d="M803,514 L822,529 L838,546 L849,576 L850,605 L866,640 L870,665 L872,692 L869,716 L854,681 L846,664 L837,644 L829,625 L827,647 L823,664 L815,684 L804,704 L800,677 L794,648 L789,627 L785,612 L783,602 L785,581 L791,554 L797,531 Z"/>
+                
+                <!-- 前臂 Forearms (正面) -->
+                <path class="muscle-path" data-muscle="Forearms" d="M190,623 L172,674 L150,721 L141,741 L135,767 L131,803 L129,838 L131,889 L132,936 L130,955 L148,950 L172,948 L192,954 L198,923 L219,853 L227,824 L228,800 L230,771 L226,753 L216,732 L213,702 L196,665 Z"/>
+                <path class="muscle-path" data-muscle="Forearms" d="M829,626 L828,654 L818,678 L803,705 L807,728 L795,748 L788,771 L791,815 L807,875 L822,933 L825,953 L846,949 L868,950 L890,955 L885,926 L888,894 L892,864 L892,833 L889,804 L882,779 L880,751 L873,724 L857,690 L844,659 Z"/>
+                
+                <!-- 背阔肌 Lats (正面可见部分) -->
+                <path class="muscle-path" data-muscle="Lats" d="M337,531 L348,558 L354,583 L353,615 L352,638 L355,679 L365,736 L350,709 L339,689 L331,673 L321,654 L316,636 L313,614 L322,590 L330,563 Z"/>
+                <path class="muscle-path" data-muscle="Lats" d="M682,532 L694,571 L703,597 L706,617 L703,642 L693,673 L679,699 L667,716 L658,730 L664,691 L668,654 L668,629 L666,598 L667,575 L675,549 Z"/>
+                
+                <!-- 腹肌 Abdominals -->
+                <path class="muscle-path" data-muscle="Abdominals" d="M442,588 L465,582 L492,577 L519,577 L542,580 L575,591 L588,603 L591,622 L594,648 L593,674 L587,694 L590,719 L588,747 L591,770 L588,801 L584,825 L579,882 L575,918 L565,952 L557,977 L549,1005 L538,1034 L530,1058 L490,1059 L480,1035 L469,1006 L459,978 L450,949 L440,917 L432,879 L428,826 L425,800 L422,774 L426,748 L425,721 L428,699 L422,670 L421,647 L424,624 L428,599 Z"/>
+                
+                <!-- 股四头肌 Quadriceps -->
+                <path class="muscle-path" data-muscle="Quadriceps" d="M387,918 L388,962 L387,982 L378,999 L355,1024 L337,1044 L314,1074 L302,1100 L285,1144 L276,1193 L274,1233 L275,1263 L280,1304 L293,1343 L311,1377 L315,1407 L323,1432 L336,1396 L341,1382 L345,1361 L353,1354 L366,1360 L370,1378 L374,1398 L378,1419 L390,1429 L401,1424 L411,1417 L422,1406 L429,1390 L438,1370 L446,1338 L447,1300 L440,1238 L434,1180 L422,1093 L411,988 L405,958 L399,928 Z"/>
+                <path class="muscle-path" data-muscle="Quadriceps" d="M632,916 L613,933 L607,967 L597,1018 L592,1094 L583,1172 L578,1254 L576,1307 L575,1337 L586,1382 L599,1412 L612,1422 L626,1424 L636,1420 L641,1404 L648,1384 L653,1349 L668,1333 L679,1350 L678,1369 L683,1391 L684,1403 L697,1427 L699,1398 L706,1380 L717,1367 L734,1325 L744,1280 L747,1232 L744,1184 L739,1152 L730,1116 L717,1083 L702,1067 L685,1053 L660,1029 L642,1003 L628,976 L628,942 Z"/>
+                
+                <!-- 小腿 Calves (正面) -->
+                <path class="muscle-path" data-muscle="Calves" d="M418,1509 L429,1544 L436,1586 L434,1624 L427,1651 L411,1700 L400,1754 L392,1799 L384,1731 L379,1662 L376,1615 L378,1580 L389,1554 Z"/>
+                <path class="muscle-path" data-muscle="Calves" d="M310,1504 L322,1484 L335,1503 L340,1530 L343,1566 L346,1598 L356,1694 L361,1762 L368,1799 L351,1800 L326,1797 L322,1760 L311,1697 L301,1643 L297,1596 L298,1558 L304,1525 Z"/>
+                <path class="muscle-path" data-muscle="Calves" d="M602,1504 L593,1539 L587,1573 L586,1594 L589,1620 L601,1657 L611,1685 L618,1718 L633,1802 L639,1727 L643,1655 L645,1614 L645,1589 L640,1565 L627,1543 Z"/>
+                <path class="muscle-path" data-muscle="Calves" d="M713,1507 L701,1483 L687,1493 L680,1532 L675,1579 L670,1620 L668,1665 L664,1719 L660,1768 L655,1795 L677,1799 L698,1799 L704,1761 L709,1740 L717,1694 L722,1659 L725,1628 L727,1581 L721,1536 Z"/>
+                
+                <!-- 内收肌 Adductors -->
+                <path class="muscle-path" data-muscle="Adductors" d="M402,928 L425,957 L447,999 L466,1040 L481,1072 L488,1118 L485,1178 L480,1221 L470,1265 L457,1305 L446,1352 L448,1300 L438,1207 L428,1127 L418,1040 Z"/>
+                <path class="muscle-path" data-muscle="Adductors" d="M612,930 L597,948 L581,976 L566,1006 L546,1050 L534,1075 L531,1112 L532,1145 L534,1175 L538,1204 L544,1246 L555,1276 L573,1339 L576,1259 L580,1203 L585,1150 L591,1082 L600,1007 Z"/>
+                
+                <!-- 外展肌 Abductors -->
+                <path class="muscle-path" data-muscle="Abductors" d="M362,878 L355,900 L348,927 L346,983 L314,1070 L340,1037 L358,1020 L378,1002 L386,981 L385,948 L386,919 Z"/>
+                <path class="muscle-path" data-muscle="Abductors" d="M662,874 L634,912 L629,945 L629,977 L649,1014 L673,1041 L717,1088 L706,1056 L693,1029 L682,992 L677,961 L675,931 L673,912 Z"/>
+                
+                <!-- 颈部 Neck -->
+                <path class="muscle-path" data-muscle="Neck" d="M449,307 L461,340 L477,378 L489,405 L469,399 L448,399 L428,401 L414,395 L420,377 L428,353 L437,331 Z"/>
+                <path class="muscle-path" data-muscle="Neck" d="M572,307 L562,327 L552,356 L545,374 L530,403 L543,399 L555,395 L571,395 L585,397 L597,401 L609,396 L598,369 L588,335 L578,323 Z"/>
+                
+                <!-- 腹斜肌 Obliques (正面) -->
+                <path class="muscle-path" data-muscle="Obliques" d="M354,576 L356,608 L354,641 L356,669 L359,693 L364,738 L362,765 L359,795 L357,827 L361,856 L368,878 L386,899 L403,917 L417,936 L419,915 L418,877 L416,852 L407,836 L402,820 L409,796 L403,776 L409,755 L408,723 L415,686 L408,658 L416,646 L416,599 L391,597 L372,590 Z"/>
+                <path class="muscle-path" data-muscle="Obliques" d="M602,599 L602,615 L600,636 L606,657 L605,673 L605,692 L608,709 L613,721 L604,740 L604,758 L607,772 L603,796 L605,810 L604,827 L599,843 L596,857 L599,879 L598,902 L602,917 L602,936 L624,910 L646,884 L654,861 L663,843 L663,826 L660,795 L658,778 L658,755 L662,739 L654,721 L657,703 L661,670 L663,643 L662,617 L662,597 L662,582 L640,596 L624,598 Z"/>
+                
+                <!-- ========== 背面 (Back View) ========== -->
+                
+                <!-- 斜方肌 Traps -->
+                <path class="muscle-path" data-muscle="Traps" d="M1595,261 L1611,289 L1603,320 L1596,357 L1608,407 L1616,458 L1619,503 L1621,537 L1618,591 L1615,651 L1608,696 L1582,664 L1556,620 L1537,583 L1538,541 L1547,501 L1556,466 L1555,438 L1544,414 L1525,406 L1496,398 L1473,384 L1491,369 L1507,355 L1536,336 L1565,314 L1580,289 L1581,249 Z"/>
+                <path class="muscle-path" data-muscle="Traps" d="M1655,251 L1644,264 L1639,286 L1654,319 L1666,350 L1661,385 L1653,413 L1647,453 L1644,497 L1643,536 L1646,593 L1648,627 L1648,665 L1654,697 L1686,646 L1717,590 L1717,546 L1707,514 L1701,485 L1697,454 L1696,431 L1701,415 L1714,409 L1739,400 L1759,393 L1775,378 L1753,363 L1733,346 L1713,330 L1693,318 L1676,299 L1665,283 L1660,270 Z"/>
+                
+                <!-- 肩膀 Shoulders (背面) -->
+                <path class="muscle-path" data-muscle="Shoulders" d="M1440,391 L1455,405 L1459,421 L1455,437 L1441,449 L1423,456 L1404,465 L1385,479 L1368,489 L1348,503 L1330,521 L1336,493 L1344,472 L1354,449 L1371,426 L1399,403 L1418,394 Z"/>
+                <path class="muscle-path" data-muscle="Shoulders" d="M1820,389 L1797,402 L1788,418 L1797,434 L1815,445 L1836,453 L1858,467 L1880,482 L1895,497 L1913,507 L1929,525 L1917,488 L1909,462 L1890,436 L1873,416 L1850,401 Z"/>
+                
+                <!-- 三头肌 Triceps (背面) -->
+                <path class="muscle-path" data-muscle="Triceps" d="M1359,503 L1333,520 L1316,537 L1304,557 L1295,582 L1293,613 L1281,640 L1275,679 L1273,714 L1272,734 L1289,725 L1307,709 L1325,690 L1337,666 L1342,678 L1349,691 L1345,711 L1344,731 L1354,756 L1381,730 L1403,697 L1413,676 L1425,648 L1431,622 L1429,601 L1427,581 L1425,563 L1426,546 L1427,522 L1415,506 L1399,498 L1381,496 Z"/>
+                <path class="muscle-path" data-muscle="Triceps" d="M1829,516 L1825,543 L1826,575 L1825,601 L1827,625 L1835,655 L1848,687 L1866,715 L1884,736 L1900,751 L1908,721 L1910,694 L1917,664 L1928,689 L1944,707 L1960,721 L1976,736 L1980,709 L1980,681 L1978,655 L1969,629 L1961,611 L1960,582 L1955,561 L1946,547 L1935,531 L1919,517 L1903,504 L1885,497 L1863,497 L1844,503 Z"/>
+                
+                <!-- 前臂 Forearms (背面) -->
+                <path class="muscle-path" data-muscle="Forearms" d="M1277,750 L1291,733 L1323,699 L1340,674 L1348,690 L1344,720 L1348,740 L1354,761 L1358,797 L1355,835 L1338,895 L1327,945 L1327,979 L1318,987 L1291,983 L1270,979 L1266,911 L1261,861 L1258,827 L1261,790 L1268,768 Z"/>
+                <path class="muscle-path" data-muscle="Forearms" d="M1917,667 L1913,689 L1909,719 L1901,756 L1899,781 L1897,815 L1903,847 L1910,876 L1921,925 L1930,955 L1931,977 L1944,985 L1964,984 L1978,983 L1987,974 L1988,953 L1987,930 L1990,897 L1994,860 L1997,823 L1996,794 L1994,775 L1988,750 L1975,730 L1949,713 L1934,697 Z"/>
+                
+                <!-- 背阔肌 Lats (背面) -->
+                <path class="muscle-path" data-muscle="Lats" d="M1429,577 L1430,599 L1431,639 L1438,664 L1453,691 L1467,716 L1476,739 L1477,761 L1477,803 L1475,829 L1478,850 L1483,868 L1499,880 L1521,886 L1537,897 L1541,865 L1545,843 L1549,818 L1557,796 L1564,771 L1575,753 L1585,734 L1596,718 L1608,695 L1585,669 L1564,636 L1550,608 L1537,583 L1515,588 L1485,590 L1461,588 L1443,583 Z"/>
+                <path class="muscle-path" data-muscle="Lats" d="M1719,578 L1739,585 L1767,590 L1793,587 L1827,576 L1828,616 L1823,644 L1808,686 L1790,713 L1779,734 L1776,760 L1773,787 L1776,813 L1777,838 L1775,860 L1766,874 L1724,893 L1716,866 L1710,841 L1703,811 L1698,787 L1687,760 L1674,738 L1661,715 L1654,695 L1689,636 L1710,597 Z"/>
+                
+                <!-- 上背部 Upper Back -->
+                <path class="muscle-path" data-muscle="Upper Back" d="M1381,491 L1409,470 L1434,457 L1456,450 L1481,446 L1506,439 L1528,433 L1530,459 L1533,496 L1531,520 L1530,547 L1533,578 L1509,583 L1483,583 L1463,581 L1441,579 L1431,568 L1429,554 L1431,536 L1430,520 L1423,506 L1411,499 L1399,493 Z"/>
+                <path class="muscle-path" data-muscle="Upper Back" d="M1725,434 L1723,456 L1723,496 L1718,524 L1720,556 L1720,580 L1749,585 L1778,587 L1801,583 L1826,577 L1823,551 L1825,528 L1833,506 L1845,495 L1861,495 L1883,495 L1860,479 L1847,468 L1826,455 L1801,449 L1773,447 L1746,441 Z"/>
+                
+                <!-- 下背部 Lower Back -->
+                <path class="muscle-path" data-muscle="Lower Back" d="M1629,711 L1607,733 L1589,759 L1569,795 L1556,831 L1553,859 L1556,884 L1576,903 L1603,919 L1631,931 L1655,919 L1685,904 L1705,883 L1708,860 L1701,825 L1687,788 L1670,757 L1651,733 Z"/>
+                
+                <!-- 臀部 Glutes -->
+                <path class="muscle-path" data-muscle="Glutes" d="M1496,883 L1482,916 L1478,956 L1482,998 L1475,1030 L1471,1067 L1480,1103 L1492,1125 L1516,1143 L1542,1151 L1572,1148 L1592,1138 L1603,1121 L1617,1105 L1626,1088 L1636,1108 L1650,1121 L1663,1138 L1686,1153 L1718,1151 L1748,1136 L1763,1122 L1775,1103 L1778,1083 L1779,1053 L1776,1028 L1772,1003 L1776,966 L1776,940 L1770,909 L1755,883 L1731,893 L1708,912 L1690,928 L1672,942 L1660,961 L1648,982 L1641,1006 L1631,1032 L1629,1055 L1626,1087 L1626,1056 L1622,1031 L1615,1005 L1608,983 L1595,962 L1583,944 L1568,926 L1546,911 L1522,896 Z"/>
+                
+                <!-- 腘绳肌 Hamstrings -->
+                <path class="muscle-path" data-muscle="Hamstrings" d="M1487,1138 L1469,1162 L1457,1188 L1459,1141 L1457,1078 L1435,1138 L1425,1169 L1413,1215 L1415,1283 L1430,1342 L1430,1383 L1431,1432 L1433,1483 L1454,1442 L1475,1460 L1486,1489 L1496,1463 L1499,1446 L1514,1480 L1533,1508 L1547,1459 L1555,1428 L1558,1395 L1558,1370 L1550,1345 L1546,1321 L1543,1271 L1538,1222 L1534,1176 L1530,1149 L1507,1138 Z"/>
+                <path class="muscle-path" data-muscle="Hamstrings" d="M1720,1153 L1715,1214 L1709,1281 L1704,1343 L1699,1370 L1698,1405 L1704,1440 L1717,1472 L1731,1504 L1748,1472 L1758,1449 L1771,1465 L1776,1495 L1787,1468 L1795,1453 L1803,1442 L1826,1489 L1828,1451 L1827,1405 L1829,1340 L1836,1294 L1840,1242 L1836,1191 L1821,1140 L1796,1073 L1790,1111 L1794,1159 L1803,1198 L1786,1164 L1768,1144 L1747,1140 Z"/>
+                
+                <!-- 小腿 Calves (背面) -->
+                <path class="muscle-path" data-muscle="Calves" d="M1456,1442 L1433,1487 L1418,1539 L1411,1592 L1416,1631 L1426,1661 L1441,1676 L1466,1675 L1481,1659 L1486,1641 L1497,1671 L1509,1692 L1528,1705 L1545,1651 L1549,1619 L1546,1584 L1541,1553 L1535,1526 L1535,1507 L1500,1454 L1488,1498 L1477,1467 Z"/>
+                <path class="muscle-path" data-muscle="Calves" d="M1729,1512 L1717,1573 L1715,1622 L1724,1664 L1739,1704 L1760,1694 L1773,1658 L1777,1635 L1789,1658 L1799,1674 L1820,1674 L1836,1668 L1847,1645 L1853,1632 L1855,1606 L1854,1572 L1847,1544 L1833,1498 L1819,1471 L1805,1441 L1789,1467 L1777,1501 L1774,1486 L1769,1467 L1757,1451 L1746,1479 Z"/>
+                
+                <!-- 内收肌 Adductors (背面) -->
+                <path class="muscle-path" data-muscle="Adductors" d="M1535,1152 L1542,1218 L1545,1262 L1547,1296 L1551,1331 L1560,1374 L1569,1338 L1578,1299 L1589,1263 L1598,1226 L1602,1196 L1604,1164 L1607,1143 L1608,1113 L1598,1136 L1563,1152 Z"/>
+                <path class="muscle-path" data-muscle="Adductors" d="M1641,1116 L1650,1182 L1655,1221 L1661,1260 L1674,1292 L1682,1325 L1686,1343 L1694,1385 L1704,1319 L1707,1268 L1712,1218 L1713,1185 L1716,1155 L1685,1154 L1658,1136 Z"/>
+            </svg>
+        </div>
+        
+        <div class="legend">
+            <div class="legend-title">Muscle Activity</div>
+            <div id="muscleList"></div>
+            
+            <div class="gradient-bar-container">
+                <div class="gradient-bar"></div>
+                <div class="gradient-labels">
+                    <span>Low</span>
+                    <span>Medium</span>
+                    <span>High</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip">
+        <div class="tooltip-title"></div>
+        <div class="tooltip-value"></div>
+    </div>
+
+    <script>
+        // Data placeholders (will be replaced by Python)
+        const muscleData = MUSCLE_DATA_PLACEHOLDER;
+        const previousData = PREVIOUS_DATA_PLACEHOLDER;
+        const currentMetric = METRICS_TYPE_PLACEHOLDER;
+        const periodType = PERIOD_TYPE_PLACEHOLDER;
+        const allMetricsData = ALL_METRICS_PLACEHOLDER;
+        const allPreviousData = ALL_PREVIOUS_PLACEHOLDER;
+        
+        // DEBUG: Log data to console
+        console.log('[DEBUG] currentMetric:', currentMetric);
+        console.log('[DEBUG] allPreviousData:', JSON.stringify(allPreviousData));
+        console.log('[DEBUG] allPreviousData[currentMetric]:', JSON.stringify(allPreviousData[currentMetric]));
+        console.log('[DEBUG] Workouts prev data:', JSON.stringify(allPreviousData['Workouts']));
+        
+        let activeMetric = currentMetric;
+        
+        // Get previous data for current metric
+        function getCurrentPreviousData() {
+            const result = allPreviousData[activeMetric] || previousData || {};
+            console.log('[DEBUG] getCurrentPreviousData() for', activeMetric, ':', JSON.stringify(result));
+            return result;
+        }
+        
+        // Leg muscles for Volume adjustment
+        // Quadriceps: 0.4, Other leg muscles: 0.7
+        const LEG_MUSCLES = ['Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Adductors', 'Abductors'];
+        const QUADRICEPS_VOLUME_FACTOR = 0.4;
+        const OTHER_LEG_VOLUME_FACTOR = 0.7;
+        
+        // Get volume adjustment factor for a muscle
+        function getVolumeFactor(muscle) {
+            if (muscle === 'Quadriceps') return QUADRICEPS_VOLUME_FACTOR;
+            if (LEG_MUSCLES.includes(muscle)) return OTHER_LEG_VOLUME_FACTOR;
+            return 1.0;
+        }
+        
+        // Color scale function - uses color intensity (light to dark blue) with fixed opacity
+        // ratio: 0 = lightest, 1 = darkest
+        function getHeatColor(value, maxValue, metric, muscle) {
+            if (!value || value <= 0) return 'rgba(200, 200, 200, 0)';
+            
+            let ratio = 0;
+            
+            // Get scale multiplier based on period type (Month = 4x Week)
+            const periodMultiplier = periodType === 'Month' ? 4 : 1;
+            
+            // For Sets: 0-12 scale (week), 0-48 scale (month)
+            if (metric === 'Sets') {
+                ratio = Math.min(value / (12 * periodMultiplier), 1);
+            }
+            // For Workouts: 0-3 scale (week), 0-12 scale (month)
+            else if (metric === 'Workouts') {
+                ratio = Math.min(value / (3 * periodMultiplier), 1);
+            }
+            // For Volume: based on maxValue
+            else if (metric === 'Volume') {
+                ratio = Math.min(value / maxValue, 1);
+            }
+            else {
+                ratio = 0.5; // Default
+            }
+            
+            // Interpolate from very light blue to medium blue (lighter overall)
+            // Light: rgb(220, 235, 250) -> Dark: rgb(66, 133, 220)
+            const lightR = 220, lightG = 235, lightB = 250;
+            const darkR = 66, darkG = 133, darkB = 220;
+            
+            const r = Math.round(lightR + (darkR - lightR) * ratio);
+            const g = Math.round(lightG + (darkG - lightG) * ratio);
+            const b = Math.round(lightB + (darkB - lightB) * ratio);
+            
+            return `rgba(${r}, ${g}, ${b}, 0.55)`; // Slightly lower opacity
+        }
+        
+        // Get current data based on active metric
+        function getCurrentData() {
+            return allMetricsData[activeMetric] || muscleData;
+        }
+        
+        // Update muscle paths colors
+        function updateMusclePaths() {
+            const data = getCurrentData();
+            
+            // For Volume: calculate adjusted maxValue using muscle-specific factors
+            let maxValue = 1;
+            if (activeMetric === 'Volume') {
+                const adjustedValues = [];
+                for (const [muscle, value] of Object.entries(data)) {
+                    if (value > 0) {
+                        const adjustedValue = value * getVolumeFactor(muscle);
+                        adjustedValues.push(adjustedValue);
+                    }
+                }
+                maxValue = adjustedValues.length > 0 ? Math.max(...adjustedValues) : 1;
+            } else {
+                const values = Object.values(data).filter(v => v > 0);
+                maxValue = values.length > 0 ? Math.max(...values) : 1;
+            }
+            
+            document.querySelectorAll('.muscle-path').forEach(path => {
+                const muscle = path.dataset.muscle;
+                let value = data[muscle] || 0;
+                
+                // For Volume: adjust muscle values using muscle-specific factors
+                let displayValue = value;
+                if (activeMetric === 'Volume') {
+                    displayValue = value * getVolumeFactor(muscle);
+                }
+                
+                const color = getHeatColor(displayValue, maxValue, activeMetric, muscle);
+                
+                path.style.fill = color;
+                path.classList.toggle('active', value > 0);
+                
+                // Add event listeners (show original value in tooltip)
+                path.addEventListener('mouseenter', (e) => showTooltip(e, muscle, value));
+                path.addEventListener('mouseleave', hideTooltip);
+                path.addEventListener('mousemove', moveTooltip);
+            });
+        }
+        
+        // Tooltip functions
+        function showTooltip(e, muscle, value) {
+            const tooltip = document.getElementById('tooltip');
+            const prevData = getCurrentPreviousData();
+            const prevValue = prevData[muscle];
+            
+            tooltip.querySelector('.tooltip-title').textContent = muscle;
+            
+            let valueText = formatValue(value);
+            if (prevValue !== null && prevValue !== undefined) {
+                const change = value - prevValue;
+                const changeText = change > 0 ? `+${formatChangeValue(change)}` : `-${formatChangeValue(change)}`;
+                const changeClass = change > 0 ? 'change-up' : (change < 0 ? 'change-down' : 'change-same');
+                valueText += ` <span class="${changeClass}">(${changeText})</span>`;
+            }
+            
+            tooltip.querySelector('.tooltip-value').innerHTML = `${activeMetric}: ${valueText}`;
+            tooltip.style.display = 'block';
+            moveTooltip(e);
+        }
+        
+        function moveTooltip(e) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.left = (e.clientX + 15) + 'px';
+            tooltip.style.top = (e.clientY + 15) + 'px';
+        }
+        
+        function hideTooltip() {
+            document.getElementById('tooltip').style.display = 'none';
+        }
+        
+        // Format value based on metric
+        function formatValue(value) {
+            if (value === null || value === undefined) return '0';
+            if (activeMetric === 'Volume') {
+                return value >= 1000 ? `${(value/1000).toFixed(1)}k` : value.toFixed(0);
+            }
+            return Math.round(value).toLocaleString();
+        }
+        
+        // Format change value based on metric
+        function formatChangeValue(change) {
+            if (change === null || change === undefined) return '0';
+            if (activeMetric === 'Volume') {
+                const absChange = Math.abs(change);
+                return absChange >= 1000 ? `${(absChange/1000).toFixed(1)}k` : absChange.toFixed(0);
+            }
+            return Math.abs(Math.round(change)).toLocaleString();
+        }
+        
+        // Update legend
+        function updateLegend() {
+            const list = document.getElementById('muscleList');
+            list.innerHTML = '';
+            
+            const data = getCurrentData();
+            const prevData = getCurrentPreviousData();
+            
+            // For Volume: calculate adjusted maxValue (leg muscles * LEG_VOLUME_FACTOR) for color only
+            let maxValue = 1;
+            if (activeMetric === 'Volume') {
+                const adjustedValues = [];
+                for (const [muscle, value] of Object.entries(data)) {
+                    if (value > 0) {
+                        const adjustedValue = value * getVolumeFactor(muscle);
+                        adjustedValues.push(adjustedValue);
+                    }
+                }
+                maxValue = adjustedValues.length > 0 ? Math.max(...adjustedValues) : 1;
+            } else {
+                const values = Object.values(data).filter(v => v > 0);
+                maxValue = values.length > 0 ? Math.max(...values) : 1;
+            }
+            
+            // Sort muscles by value
+            const sortedMuscles = Object.entries(data)
+                .filter(([_, v]) => v > 0)
+                .sort((a, b) => b[1] - a[1]);
+            
+            for (const [muscle, value] of sortedMuscles) {
+                // For color: use adjusted value using muscle-specific factors
+                let colorValue = value;
+                if (activeMetric === 'Volume') {
+                    colorValue = value * getVolumeFactor(muscle);
+                }
+                const color = getHeatColor(colorValue, maxValue, activeMetric, muscle);
+                const prevValue = prevData[muscle];
+                
+                const item = document.createElement('div');
+                item.className = 'muscle-item';
+                
+                let changeHtml = '';
+                if (prevValue !== null && prevValue !== undefined) {
+                    const change = value - prevValue;
+                    if (change > 0) {
+                        changeHtml = `<span class="muscle-change change-up">↑${formatChangeValue(change)}</span>`;
+                    } else if (change < 0) {
+                        changeHtml = `<span class="muscle-change change-down">↓${formatChangeValue(Math.abs(change))}</span>`;
+                    } else {
+                        // 变化为0时显示 →0
+                        changeHtml = `<span class="muscle-change change-same">→0</span>`;
+                    }
+                } else if (Object.keys(prevData).length > 0) {
+                    // 上一期有数据但该肌肉没有记录，说明是新增的
+                    changeHtml = `<span class="muscle-change change-up">↑${formatChangeValue(value)}</span>`;
+                }
+                
+                item.innerHTML = `
+                    <div class="muscle-info">
+                        <div class="muscle-color" style="background: ${color}"></div>
+                        <span class="muscle-name">${muscle}</span>
+                    </div>
+                    <div>
+                        <span class="muscle-value">${formatValue(value)}</span>
+                        ${changeHtml}
+                    </div>
+                `;
+                
+                // Hover to highlight muscle paths
+                item.addEventListener('mouseenter', () => highlightMuscle(muscle, true));
+                item.addEventListener('mouseleave', () => highlightMuscle(muscle, false));
+                
+                list.appendChild(item);
+            }
+            
+            // Show message if no data
+            if (sortedMuscles.length === 0) {
+                list.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No muscle data for this period</div>';
+            }
+        }
+        
+        function highlightMuscle(muscle, highlight) {
+            // Upper Back 包含 Traps，所以高亮 Upper Back 时也高亮 Traps
+            const muscleIncludes = {
+                "Upper Back": ["Traps"]
+            };
+            
+            // 获取需要高亮的所有肌肉
+            const musclesToHighlight = [muscle];
+            if (muscleIncludes[muscle]) {
+                musclesToHighlight.push(...muscleIncludes[muscle]);
+            }
+            
+            musclesToHighlight.forEach(m => {
+                document.querySelectorAll(`.muscle-path[data-muscle="${m}"]`).forEach(path => {
+                    if (highlight) {
+                        path.style.filter = 'brightness(1.3)';
+                    } else {
+                        path.style.filter = '';
+                    }
+                });
+            });
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            updateMusclePaths();
+            updateLegend();
+        });
+    </script>
+</body>
+</html>

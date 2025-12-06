@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>PNG 肌肉区域编辑器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            overflow: auto;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a2e;
+            color: white;
+            padding: 20px;
+            min-width: max-content;
+        }
+        h1 { text-align: center; margin-bottom: 10px; }
+        
+        .info-panel {
+            position: fixed;
+            top: 10px;
+            background: rgba(0,0,0,0.9);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 1000;
+            min-width: 320px;
+            max-height: 90vh;
+            overflow-y: auto;
+            transition: left 0.3s, right 0.3s;
+        }
+        .info-panel.panel-right {
+            right: 10px;
+            left: auto;
+        }
+        .info-panel.panel-left {
+            left: 10px;
+            right: auto;
+        }
+        .toggle-position-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: #555;
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .toggle-position-btn:hover {
+            background: #777;
+        }
+        .coord-display {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff00;
+            margin-bottom: 10px;
+        }
+        .points-list {
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 11px;
+            background: #222;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        button {
+            margin: 3px;
+            padding: 6px 12px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .btn-clear { background: #ff4444; color: white; }
+        .btn-copy { background: #44ff44; color: black; }
+        .btn-undo { background: #ffaa44; color: black; }
+        .btn-edit { background: #4488ff; color: white; }
+        .btn-save { background: #44ff88; color: black; }
+        
+        .container {
+            margin-top: 20px;
+            padding-bottom: 50px;
+            padding-left: 20px;
+            display: inline-block;
+            min-width: 100%;
+        }
+        
+        #imageWrapper {
+            position: relative;
+            cursor: crosshair;
+            display: inline-block;
+        }
+        
+        #anatomyImage {
+            display: block;
+            max-width: none; /* 允许图片显示原始大小 */
+        }
+        
+        #overlaySvg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 99;
+            pointer-events: auto;
+        }
+        
+        .drag-point {
+            cursor: move;
+        }
+        .drag-point:hover {
+            r: 8 !important;
+        }
+        
+        /* 右键菜单 */
+        .context-menu {
+            position: fixed;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 5px 0;
+            z-index: 2000;
+            min-width: 120px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+        .context-menu div {
+            padding: 8px 15px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .context-menu div:hover {
+            background: #0066aa;
+        }
+        .context-menu .delete-item {
+            color: #ff6666;
+        }
+        .context-menu .delete-item:hover {
+            background: #aa0000;
+            color: white;
+        }
+        
+        .instructions {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #aaa;
+            font-size: 14px;
+        }
+        
+        .muscle-name-input {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #333;
+            color: white;
+        }
+        
+        .saved-muscles {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #444;
+        }
+        .saved-muscles h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: #aaa;
+        }
+        .muscle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 8px;
+            margin: 3px 0;
+            background: #333;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .muscle-item.active {
+            background: #0066aa;
+        }
+        .muscle-item span {
+            cursor: pointer;
+            flex: 1;
+        }
+        .muscle-item button {
+            padding: 2px 8px;
+            font-size: 10px;
+        }
+        
+        .mode-indicator {
+            padding: 8px;
+            margin: 10px 0;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .mode-new { background: #006600; }
+        .mode-edit { background: #0066aa; }
+    </style>
+</head>
+<body>
+    <h1>PNG 肌肉区域编辑器</h1>
+    <p class="instructions">
+        点击添加点 | 拖动红点调整位置 | 点击肌肉名称进入编辑模式
+    </p>
+    
+    <div class="info-panel panel-right" id="infoPanel">
+        <button class="toggle-position-btn" onclick="togglePanelPosition()" title="切换位置">⇄</button>
+        <div class="coord-display">X: <span id="mouseX">0</span>, Y: <span id="mouseY">0</span></div>
+        <div>图片尺寸: <span id="imgSize">加载中...</span></div>
+        <div style="margin-top:5px">
+            缩放: 
+            <button onclick="setZoom(0.5)">50%</button>
+            <button onclick="setZoom(0.75)">75%</button>
+            <button onclick="setZoom(1)">100%</button>
+            <button onclick="setZoom(1.5)">150%</button>
+            <button onclick="setZoom(2)">200%</button>
+        </div>
+        
+        <div id="modeIndicator" class="mode-indicator mode-new">新建模式</div>
+        
+        <div>
+            <input type="text" id="muscleName" class="muscle-name-input" placeholder="肌肉名称 (如: Left Biceps)">
+        </div>
+        
+        <div style="margin-top:10px">
+            <button class="btn-undo" onclick="undoPoint()">撤销</button>
+            <button class="btn-clear" onclick="clearPoints()">清空</button>
+            <button class="btn-save" onclick="saveMuscle()">保存</button>
+            <button class="btn-edit" onclick="newMuscle()">新建</button>
+        </div>
+        <div style="margin-top:5px">
+            <button class="btn-copy" onclick="copyPath()">复制Path</button>
+            <button class="btn-copy" onclick="copyFullCode()">复制代码</button>
+            <button class="btn-copy" onclick="copyAllCode()">导出全部</button>
+        </div>
+        
+        <div class="points-list" id="pointsList">点击图片添加点...</div>
+        <div style="font-size:12px; color:#888;">当前: <span id="pointCount">0</span> 点</div>
+        
+        <div class="saved-muscles">
+            <h3>已保存的肌肉区域</h3>
+            <div id="muscleList"></div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div id="imageWrapper">
+            <img id="anatomyImage" src="muscle_anatomy.png" alt="Muscle Anatomy">
+            <svg id="overlaySvg"></svg>
+        </div>
+    </div>
+    
+    <!-- 右键菜单 -->
+    <div id="contextMenu" class="context-menu" style="display:none;">
+        <div onclick="insertPointBefore()">在此点前插入</div>
+        <div onclick="insertPointAfter()">在此点后插入</div>
+        <div class="delete-item" onclick="deletePoint()">删除此点</div>
+    </div>
+    
+    <script>
+        let currentPoints = [];
+        let savedMuscles = [];
+        let editingIndex = -1;
+        let draggingPoint = -1;
+        let selectedPointIndex = -1; // 右键选中的点
+        let scaleX = 1, scaleY = 1;
+        let currentZoom = 1;
+        
+        // 中键拖动视图
+        let isPanning = false;
+        let panStartX = 0, panStartY = 0;
+        let scrollStartX = 0, scrollStartY = 0;
+        
+        const wrapper = document.getElementById('imageWrapper');
+        const img = document.getElementById('anatomyImage');
+        const svg = document.getElementById('overlaySvg');
+        const contextMenu = document.getElementById('contextMenu');
+        const container = document.querySelector('.container');
+        const infoPanel = document.getElementById('infoPanel');
+        
+        // 切换工具栏位置
+        function togglePanelPosition() {
+            if (infoPanel.classList.contains('panel-right')) {
+                infoPanel.classList.remove('panel-right');
+                infoPanel.classList.add('panel-left');
+            } else {
+                infoPanel.classList.remove('panel-left');
+                infoPanel.classList.add('panel-right');
+            }
+        }
+        
+        // 缩放功能
+        function setZoom(zoom) {
+            currentZoom = zoom;
+            const imgWidth = img.naturalWidth * zoom;
+            const imgHeight = img.naturalHeight * zoom;
+            
+            img.style.width = imgWidth + 'px';
+            img.style.height = imgHeight + 'px';
+            svg.style.width = imgWidth + 'px';
+            svg.style.height = imgHeight + 'px';
+            
+            // 更新缩放比例（用于坐标转换）
+            scaleX = 1 / zoom;
+            scaleY = 1 / zoom;
+        }
+        
+        // 预定义已完成的肌肉
+        const predefinedMuscles = [
+            {
+                name: "Left Shoulder",
+                dataName: "Shoulders",
+                path: "M219,516 L226,535 L233,555 L238,575 L242,591 L261,571 L277,557 L288,547 L302,537 L311,529 L321,521 L327,513 L328,500 L329,490 L330,476 L335,459 L340,449 L353,438 L361,430 L375,421 L387,414 L399,409 L391,405 L380,405 L371,398 L358,394 L348,390 L339,387 L327,388 L314,394 L301,399 L289,405 L276,413 L264,423 L250,438 L242,453 Z"
+            },
+            {
+                name: "Right Shoulder",
+                dataName: "Shoulders",
+                path: "M586,395 L621,396 L643,391 L668,388 L688,389 L711,395 L729,405 L747,417 L762,435 L773,452 L784,474 L791,494 L798,507 L800,522 L799,538 L790,551 L784,569 L780,585 L781,604 L769,577 L748,559 L725,542 L710,526 L690,511 L687,491 L686,478 L678,464 L670,445 L655,432 L643,422 L632,414 Z"
+            },
+            {
+                name: "Chest",
+                dataName: "Chest",
+                path: "M459,393 L475,405 L487,416 L504,423 L519,411 L539,405 L562,395 L588,396 L614,408 L638,424 L658,438 L671,453 L678,470 L680,496 L680,510 L678,525 L672,549 L663,565 L654,576 L633,587 L616,594 L599,598 L579,589 L557,580 L537,575 L526,570 L518,567 L509,564 L499,565 L490,567 L485,571 L474,575 L457,581 L444,587 L432,593 L421,595 L409,595 L398,593 L386,589 L376,584 L364,577 L357,569 L350,557 L346,544 L340,531 L335,520 L332,510 L331,498 L334,485 L335,475 L344,465 L349,454 L360,444 L367,436 L377,427 L398,415 L418,406 L438,401 Z"
+            }
+        ];
+        
+        function parsePathToPoints(pathStr) {
+            const points = [];
+            const regex = /[ML]\s*(\d+),(\d+)/g;
+            let match;
+            while ((match = regex.exec(pathStr)) !== null) {
+                points.push({ imgX: parseInt(match[1]), imgY: parseInt(match[2]) });
+            }
+            return points;
+        }
+        
+        function initPredefinedMuscles() {
+            predefinedMuscles.forEach(m => {
+                savedMuscles.push({
+                    name: m.name,
+                    dataName: m.dataName,
+                    points: parsePathToPoints(m.path)
+                });
+            });
+            updateMuscleList();
+        }
+        
+        img.onload = function() {
+            // 使用图片的自然尺寸，不依赖显示尺寸
+            const imgWidth = img.naturalWidth;
+            const imgHeight = img.naturalHeight;
+            
+            // SVG 使用图片实际尺寸
+            svg.style.width = imgWidth + 'px';
+            svg.style.height = imgHeight + 'px';
+            svg.setAttribute('viewBox', `0 0 ${imgWidth} ${imgHeight}`);
+            
+            // 图片也显示原始尺寸
+            img.style.width = imgWidth + 'px';
+            img.style.height = imgHeight + 'px';
+            
+            // 缩放比例固定为1（因为现在是1:1显示）
+            scaleX = 1;
+            scaleY = 1;
+            
+            document.getElementById('imgSize').textContent = `${imgWidth} × ${imgHeight}`;
+            
+            // 优先从 localStorage 加载，否则用预定义数据
+            if (!loadFromLocalStorage()) {
+                initPredefinedMuscles();
+            }
+            updateMuscleList();
+            redrawAll();
+        };
+        
+        wrapper.addEventListener('mousemove', function(e) {
+            // 中键拖动视图
+            if (isPanning) {
+                const dx = e.clientX - panStartX;
+                const dy = e.clientY - panStartY;
+                window.scrollTo({
+                    left: scrollStartX - dx,
+                    top: scrollStartY - dy,
+                    behavior: 'auto'
+                });
+                return;
+            }
+            
+            const rect = img.getBoundingClientRect();
+            const x = Math.round((e.clientX - rect.left) * scaleX);
+            const y = Math.round((e.clientY - rect.top) * scaleY);
+            
+            document.getElementById('mouseX').textContent = x;
+            document.getElementById('mouseY').textContent = y;
+            
+            if (draggingPoint >= 0) {
+                currentPoints[draggingPoint].imgX = x;
+                currentPoints[draggingPoint].imgY = y;
+                redrawAll();
+                updatePointsList();
+            }
+        });
+        
+        // 中键按下开始拖动
+        wrapper.addEventListener('mousedown', function(e) {
+            if (e.button === 1) { // 中键
+                e.preventDefault();
+                isPanning = true;
+                panStartX = e.clientX;
+                panStartY = e.clientY;
+                scrollStartX = window.pageXOffset || document.documentElement.scrollLeft;
+                scrollStartY = window.pageYOffset || document.documentElement.scrollTop;
+                wrapper.style.cursor = 'grabbing';
+            }
+        });
+        
+        // 中键释放停止拖动
+        document.addEventListener('mouseup', function(e) {
+            if (e.button === 1) {
+                isPanning = false;
+                wrapper.style.cursor = 'crosshair';
+            }
+            draggingPoint = -1;
+        });
+        
+        // 阻止中键默认行为（自动滚动）
+        document.addEventListener('auxclick', function(e) {
+            if (e.button === 1) {
+                e.preventDefault();
+            }
+        });
+        
+        // 阻止中键自动滚动
+        document.body.addEventListener('mousedown', function(e) {
+            if (e.button === 1) {
+                e.preventDefault();
+            }
+        });
+        
+        svg.addEventListener('mousedown', function(e) {
+            if (e.target.classList.contains('drag-point')) {
+                draggingPoint = parseInt(e.target.dataset.index);
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+        
+        // 右键菜单
+        svg.addEventListener('contextmenu', function(e) {
+            if (e.target.classList.contains('drag-point')) {
+                e.preventDefault();
+                selectedPointIndex = parseInt(e.target.dataset.index);
+                contextMenu.style.display = 'block';
+                contextMenu.style.left = e.clientX + 'px';
+                contextMenu.style.top = e.clientY + 'px';
+            }
+        });
+        
+        // 点击其他地方隐藏菜单
+        document.addEventListener('click', function(e) {
+            if (!contextMenu.contains(e.target)) {
+                contextMenu.style.display = 'none';
+            }
+        });
+        
+        wrapper.addEventListener('click', function(e) {
+            // 如果点击的是拖动点，不添加新点
+            if (e.target.classList.contains('drag-point')) return;
+            if (draggingPoint >= 0) return;
+            
+            // 如果点击的是已保存的肌肉区域，进入编辑模式，不添加新点
+            if (e.target.classList.contains('saved-muscle-path')) {
+                const idx = parseInt(e.target.dataset.muscleIndex);
+                editMuscle(idx);
+                return;
+            }
+            
+            const rect = img.getBoundingClientRect();
+            const imgX = Math.round((e.clientX - rect.left) * scaleX);
+            const imgY = Math.round((e.clientY - rect.top) * scaleY);
+            
+            currentPoints.push({ imgX, imgY });
+            
+            updatePointsList();
+            redrawAll();
+        });
+        
+        function redrawAll() {
+            svg.innerHTML = '';
+            
+            // 已保存的肌肉
+            savedMuscles.forEach((muscle, idx) => {
+                if (idx === editingIndex) return;
+                
+                const pathD = pointsToPath(muscle.points);
+                if (pathD) {
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    path.setAttribute('d', pathD);
+                    path.setAttribute('fill', 'rgba(100, 100, 255, 0.3)');
+                    path.setAttribute('stroke', '#6666ff');
+                    path.setAttribute('stroke-width', '2');
+                    path.style.cursor = 'pointer';
+                    path.classList.add('saved-muscle-path');
+                    path.dataset.muscleIndex = idx;
+                    svg.appendChild(path);
+                    
+                    // 标签
+                    const cx = muscle.points.reduce((s, p) => s + p.imgX, 0) / muscle.points.length;
+                    const cy = muscle.points.reduce((s, p) => s + p.imgY, 0) / muscle.points.length;
+                    
+                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    text.setAttribute('x', cx);
+                    text.setAttribute('y', cy);
+                    text.setAttribute('fill', 'white');
+                    text.setAttribute('font-size', '16');
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('pointer-events', 'none');
+                    text.setAttribute('font-weight', 'bold');
+                    text.style.textShadow = '1px 1px 2px black';
+                    text.textContent = muscle.name;
+                    svg.appendChild(text);
+                }
+            });
+            
+            // 当前编辑的路径
+            if (currentPoints.length >= 2) {
+                const pathD = pointsToPath(currentPoints);
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', pathD);
+                path.setAttribute('fill', 'rgba(255, 102, 0, 0.5)');
+                path.setAttribute('stroke', '#00ff00');
+                path.setAttribute('stroke-width', '3');
+                path.style.pointerEvents = 'none';
+                svg.appendChild(path);
+            }
+            
+            // 可拖动的点
+            currentPoints.forEach((p, i) => {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', p.imgX);
+                circle.setAttribute('cy', p.imgY);
+                circle.setAttribute('r', '6');
+                circle.setAttribute('fill', i === 0 ? '#00ff00' : '#ff0000');
+                circle.setAttribute('stroke', 'white');
+                circle.setAttribute('stroke-width', '2');
+                circle.setAttribute('data-index', i);
+                circle.classList.add('drag-point');
+                svg.appendChild(circle);
+            });
+        }
+        
+        function pointsToPath(points) {
+            if (points.length < 2) return '';
+            let d = `M${points[0].imgX},${points[0].imgY}`;
+            for (let i = 1; i < points.length; i++) {
+                d += ` L${points[i].imgX},${points[i].imgY}`;
+            }
+            if (points.length >= 3) d += ' Z';
+            return d;
+        }
+        
+        function updatePointsList() {
+            let html = currentPoints.map((p, i) => `<div>${i + 1}: (${p.imgX}, ${p.imgY})</div>`).join('');
+            document.getElementById('pointsList').innerHTML = html || '点击图片添加点...';
+            document.getElementById('pointCount').textContent = currentPoints.length;
+        }
+        
+        function updateMuscleList() {
+            let html = savedMuscles.map((m, i) => `
+                <div class="muscle-item ${i === editingIndex ? 'active' : ''}">
+                    <span onclick="editMuscle(${i})">${m.name} (${m.points.length}点)</span>
+                    <button class="btn-clear" onclick="deleteMuscle(${i})">删除</button>
+                </div>
+            `).join('');
+            document.getElementById('muscleList').innerHTML = html || '<div style="color:#666">暂无</div>';
+        }
+        
+        function editMuscle(index) {
+            editingIndex = index;
+            currentPoints = savedMuscles[index].points.map(p => ({...p}));
+            document.getElementById('muscleName').value = savedMuscles[index].name;
+            
+            document.getElementById('modeIndicator').className = 'mode-indicator mode-edit';
+            document.getElementById('modeIndicator').textContent = `编辑: ${savedMuscles[index].name}`;
+            
+            updatePointsList();
+            updateMuscleList();
+            redrawAll();
+        }
+        
+        function newMuscle() {
+            editingIndex = -1;
+            currentPoints = [];
+            document.getElementById('muscleName').value = '';
+            
+            document.getElementById('modeIndicator').className = 'mode-indicator mode-new';
+            document.getElementById('modeIndicator').textContent = '新建模式';
+            
+            updatePointsList();
+            updateMuscleList();
+            redrawAll();
+        }
+        
+        function saveMuscle() {
+            const name = document.getElementById('muscleName').value.trim();
+            if (!name) { alert('请输入肌肉名称'); return; }
+            if (currentPoints.length < 3) { alert('至少需要3个点'); return; }
+            
+            const muscle = {
+                name: name,
+                dataName: name.replace(/\s*(Left|Right)\s*/gi, '').trim(),
+                points: currentPoints.map(p => ({...p}))
+            };
+            
+            if (editingIndex >= 0) {
+                savedMuscles[editingIndex] = muscle;
+            } else {
+                savedMuscles.push(muscle);
+            }
+            
+            // 保存到 localStorage
+            saveToLocalStorage();
+            
+            // 重置编辑状态
+            editingIndex = -1;
+            currentPoints = [];
+            document.getElementById('muscleName').value = '';
+            
+            document.getElementById('modeIndicator').className = 'mode-indicator mode-new';
+            document.getElementById('modeIndicator').textContent = '新建模式 (已保存)';
+            
+            updatePointsList();
+            updateMuscleList();
+            redrawAll();
+            
+            alert('保存成功！');
+        }
+        
+        // 保存到 localStorage
+        function saveToLocalStorage() {
+            const data = savedMuscles.map(m => ({
+                name: m.name,
+                dataName: m.dataName,
+                path: pointsToPath(m.points)
+            }));
+            localStorage.setItem('muscleData', JSON.stringify(data));
+        }
+        
+        // 从 localStorage 加载
+        function loadFromLocalStorage() {
+            const data = localStorage.getItem('muscleData');
+            if (data) {
+                try {
+                    const muscles = JSON.parse(data);
+                    savedMuscles = muscles.map(m => ({
+                        name: m.name,
+                        dataName: m.dataName,
+                        points: parsePathToPoints(m.path)
+                    }));
+                    return true;
+                } catch (e) {
+                    console.error('加载数据失败:', e);
+                }
+            }
+            return false;
+        }
+        
+        function deleteMuscle(index) {
+            if (confirm(`删除 "${savedMuscles[index].name}"?`)) {
+                savedMuscles.splice(index, 1);
+                if (editingIndex === index) newMuscle();
+                else if (editingIndex > index) editingIndex--;
+                saveToLocalStorage();
+                updateMuscleList();
+                redrawAll();
+            }
+        }
+        
+        function undoPoint() {
+            if (currentPoints.length > 0) {
+                currentPoints.pop();
+                updatePointsList();
+                redrawAll();
+            }
+        }
+        
+        function clearPoints() {
+            currentPoints = [];
+            updatePointsList();
+            redrawAll();
+        }
+        
+        // 删除选中的点
+        function deletePoint() {
+            if (selectedPointIndex >= 0 && selectedPointIndex < currentPoints.length) {
+                currentPoints.splice(selectedPointIndex, 1);
+                selectedPointIndex = -1;
+                contextMenu.style.display = 'none';
+                updatePointsList();
+                redrawAll();
+            }
+        }
+        
+        // 在选中点前插入
+        function insertPointBefore() {
+            if (selectedPointIndex >= 0 && selectedPointIndex < currentPoints.length) {
+                const p = currentPoints[selectedPointIndex];
+                // 插入一个稍微偏移的点
+                const prevIdx = selectedPointIndex > 0 ? selectedPointIndex - 1 : currentPoints.length - 1;
+                const prev = currentPoints[prevIdx];
+                const newX = Math.round((p.imgX + prev.imgX) / 2);
+                const newY = Math.round((p.imgY + prev.imgY) / 2);
+                currentPoints.splice(selectedPointIndex, 0, { imgX: newX, imgY: newY });
+                selectedPointIndex = -1;
+                contextMenu.style.display = 'none';
+                updatePointsList();
+                redrawAll();
+            }
+        }
+        
+        // 在选中点后插入
+        function insertPointAfter() {
+            if (selectedPointIndex >= 0 && selectedPointIndex < currentPoints.length) {
+                const p = currentPoints[selectedPointIndex];
+                const nextIdx = (selectedPointIndex + 1) % currentPoints.length;
+                const next = currentPoints[nextIdx];
+                const newX = Math.round((p.imgX + next.imgX) / 2);
+                const newY = Math.round((p.imgY + next.imgY) / 2);
+                currentPoints.splice(selectedPointIndex + 1, 0, { imgX: newX, imgY: newY });
+                selectedPointIndex = -1;
+                contextMenu.style.display = 'none';
+                updatePointsList();
+                redrawAll();
+            }
+        }
+        
+        function copyPath() {
+            if (currentPoints.length < 3) { alert('至少需要3个点'); return; }
+            navigator.clipboard.writeText(pointsToPath(currentPoints)).then(() => alert('Path已复制'));
+        }
+        
+        function copyFullCode() {
+            if (currentPoints.length < 3) { alert('至少需要3个点'); return; }
+            const name = document.getElementById('muscleName').value || 'Unknown';
+            const dataName = name.replace(/\s*(Left|Right)\s*/gi, '').trim();
+            const code = `<path class="muscle-path" data-muscle="${dataName}" fill="#ff6600" d="${pointsToPath(currentPoints)}"/>`;
+            navigator.clipboard.writeText(code).then(() => alert('代码已复制'));
+        }
+        
+        function copyAllCode() {
+            let all = savedMuscles.map(m => 
+                `            <path class="muscle-path" data-muscle="${m.dataName}" fill="#ff6600" d="${pointsToPath(m.points)}"/>`
+            ).join('\n');
+            
+            if (currentPoints.length >= 3) {
+                const name = document.getElementById('muscleName').value || 'Unknown';
+                const dataName = name.replace(/\s*(Left|Right)\s*/gi, '').trim();
+                all += `\n            <path class="muscle-path" data-muscle="${dataName}" fill="#ff6600" d="${pointsToPath(currentPoints)}"/>`;
+            }
+            
+            navigator.clipboard.writeText(all).then(() => 
+                alert(`已复制 ${savedMuscles.length} 个肌肉区域的代码`)
+            );
+        }
+    </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -9,6 +10,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 import html
 import urllib.parse
+
+# 获取应用程序所在目录（支持打包后的EXE和直接运行的脚本）
+if getattr(sys, 'frozen', False):
+    # 作为打包后的可执行文件运行
+    APP_DIR = Path(sys.executable).parent
+else:
+    # 作为脚本运行
+    APP_DIR = Path(__file__).parent
 
 try:
     from streamlit_float import float_init  # type: ignore
@@ -1306,6 +1315,7 @@ MUSCLE_GROUPS = ["Back", "Chest", "Core", "Shoulders", "Arms", "Legs"]
 # 细肌肉 -> 六大肌群映射（根据 exercises.csv 里的 primary_muscle / other_muscles）
 MUSCLE_TO_GROUP = {
     "Abdominals": "Core",
+    "Obliques": "Core",  # 腹斜肌
     "Lower Back": "Back",
     "Lats": "Back",
     "Upper Back": "Back",
@@ -1319,7 +1329,13 @@ MUSCLE_TO_GROUP = {
     "Hamstrings": "Legs",
     "Glutes": "Legs",
     "Adductors": "Legs",
+    "Abductors": "Legs",  # 外展肌
     "Calves": "Legs",
+    "Neck": "Shoulders",  # 颈部归类到肩膀组
+    # 以下为特殊类型，不在热力图中显示
+    "Cardio": None,
+    "Full Body": None,
+    "Other": None,
 }
 
 # 反向：每个大肌群有哪些细肌肉（只是一个参考集合，用的时候还是以真实数据为准）
@@ -1458,7 +1474,7 @@ def build_fetch_overlay(progress_lines: list[str]) -> str:
 # 数据加载
 # -----------------------------------
 
-def load_exercises(path: str = "exercises.csv") -> pd.DataFrame:
+def load_exercises(path: str = None) -> pd.DataFrame:
     """
     内置动作表：exercises.csv
     必须至少包含列：
@@ -1469,6 +1485,8 @@ def load_exercises(path: str = "exercises.csv") -> pd.DataFrame:
     
     注意：每次调用都会重新加载文件，确保获取最新数据
     """
+    if path is None:
+        path = APP_DIR / "exercises.csv"
     df = pd.read_csv(path)
     # 去除关键文本字段的首尾空格，避免合并失败
     df["exercise_title"] = df["exercise_title"].astype(str).str.strip()
@@ -1513,13 +1531,76 @@ def load_exercises(path: str = "exercises.csv") -> pd.DataFrame:
 
     df["secondary_groups"] = df.apply(build_secondary_groups, axis=1)
 
-    # 返回时保留细肌肉 + 大肌群两套信息，以及 media_url
+    # 合并 custom_exercises.csv 的数据（覆盖或新增）
+    # custom_exercises.csv 使用 secondary_muscles 列，需要映射到 other_muscles
+    if CUSTOM_EXERCISES_PATH.exists():
+        try:
+            custom_df = pd.read_csv(CUSTOM_EXERCISES_PATH, keep_default_na=False, na_values=[""])
+            if not custom_df.empty and "exercise_title" in custom_df.columns:
+                custom_df["exercise_title"] = custom_df["exercise_title"].astype(str).str.strip()
+                
+                # 确保必要的列存在
+                if "primary_muscle" not in custom_df.columns:
+                    custom_df["primary_muscle"] = ""
+                if "secondary_muscles" not in custom_df.columns:
+                    custom_df["secondary_muscles"] = ""
+                if "equipment" not in custom_df.columns:
+                    custom_df["equipment"] = ""
+                
+                # 映射 secondary_muscles -> other_muscles
+                custom_df["other_muscles"] = custom_df["secondary_muscles"].fillna("")
+                custom_df["primary_muscle"] = custom_df["primary_muscle"].fillna("")
+                custom_df["equipment"] = custom_df["equipment"].fillna("")
+                
+                # 计算 primary_group 和 secondary_groups
+                custom_df["primary_group"] = custom_df["primary_muscle"].map(MUSCLE_TO_GROUP)
+                custom_df["secondary_groups"] = custom_df.apply(build_secondary_groups, axis=1)
+                
+                # 填充其他必要的列
+                custom_df["exercise_type"] = ""
+                custom_df["format"] = ""
+                custom_df["weight_modifier"] = ""
+                custom_df["media_url"] = ""
+                
+                # 对于已存在于 exercises.csv 的动作，更新其肌肉信息
+                # 对于不存在的动作，添加到列表中
+                for _, custom_row in custom_df.iterrows():
+                    title = custom_row["exercise_title"]
+                    mask = df["exercise_title"] == title
+                    if mask.any():
+                        # 更新已存在动作的肌肉信息
+                        df.loc[mask, "primary_muscle"] = custom_row["primary_muscle"]
+                        df.loc[mask, "other_muscles"] = custom_row["other_muscles"]
+                        df.loc[mask, "primary_group"] = custom_row["primary_group"]
+                        df.loc[mask, "secondary_groups"] = custom_row["secondary_groups"]
+                        if custom_row["equipment"]:
+                            df.loc[mask, "equipment"] = custom_row["equipment"]
+                    else:
+                        # 添加新动作
+                        new_row = pd.DataFrame([{
+                            "exercise_title": title,
+                            "primary_muscle": custom_row["primary_muscle"],
+                            "other_muscles": custom_row["other_muscles"],
+                            "primary_group": custom_row["primary_group"],
+                            "secondary_groups": custom_row["secondary_groups"],
+                            "equipment": custom_row["equipment"],
+                            "exercise_type": "",
+                            "format": "",
+                            "weight_modifier": "",
+                            "media_url": "",
+                        }])
+                        df = pd.concat([df, new_row], ignore_index=True)
+        except Exception:
+            pass  # 如果读取失败，继续使用原有数据
+
+    # 返回时保留细肌肉 + 大肌群两套信息，以及 media_url 和 equipment
     return df[[
         "exercise_title",
         "primary_muscle",
         "other_muscles",
         "primary_group",
         "secondary_groups",
+        "equipment",
         "exercise_type",
         "format",
         "weight_modifier",
@@ -1635,9 +1716,9 @@ def convert_distance_for_display(value_km: float | pd.Series) -> float | pd.Seri
     return value_km * KM_TO_MI
 
 
-API_KEY_STORE_PATH = Path(".remembered_api_key.json")
-USER_PREFS_PATH = Path(".user_preferences.json")
-CUSTOM_EXERCISES_PATH = Path("custom_exercises.csv")
+API_KEY_STORE_PATH = APP_DIR / ".remembered_api_key.json"
+USER_PREFS_PATH = APP_DIR / ".user_preferences.json"
+CUSTOM_EXERCISES_PATH = APP_DIR / "custom_exercises.csv"
 
 
 def load_custom_exercises() -> pd.DataFrame:
@@ -1701,6 +1782,40 @@ def get_custom_exercises_csv_bytes() -> bytes:
         # Return template
         df = pd.DataFrame(columns=["exercise_title", "equipment", "primary_muscle", "secondary_muscles"])
     return df.to_csv(index=False).encode("utf-8")
+
+
+def get_unconfigured_custom_exercises(raw_hevy_df: pd.DataFrame) -> list:
+    """
+    Find exercises in user's workout data that are not in exercises.csv 
+    and not yet configured in custom_exercises.csv (i.e., have no primary_muscle set).
+    Returns a list of exercise titles that need configuration.
+    """
+    if raw_hevy_df is None or raw_hevy_df.empty:
+        return []
+    
+    try:
+        # Load exercises.csv
+        exercises_csv = pd.read_csv(APP_DIR / "exercises.csv", keep_default_na=False, na_values=[""])
+        csv_exercise_titles = set(exercises_csv["exercise_title"].astype(str).str.strip().unique())
+    except Exception:
+        csv_exercise_titles = set()
+    
+    # Load custom_exercises.csv
+    custom_ex_df = load_custom_exercises()
+    # Only consider configured if primary_muscle is set
+    if not custom_ex_df.empty and "primary_muscle" in custom_ex_df.columns:
+        configured_custom = set(
+            custom_ex_df[custom_ex_df["primary_muscle"].fillna("").str.strip() != ""]["exercise_title"].unique()
+        )
+    else:
+        configured_custom = set()
+    
+    # Find user's exercises
+    user_exercise_titles = set(raw_hevy_df["exercise_title"].astype(str).str.strip().unique())
+    
+    # Unconfigured = in user data, not in exercises.csv, and not configured in custom_exercises.csv
+    unconfigured = user_exercise_titles - csv_exercise_titles - configured_custom
+    return sorted(list(unconfigured))
 
 
 def load_persisted_api_key() -> str:
@@ -2189,11 +2304,21 @@ def build_muscle_distribution(df: pd.DataFrame, view_mode: str, metric: str, wee
 # 新增：细肌肉分布（Biceps / Triceps / …）
 # -----------------------------------
 
-def build_detailed_muscle_distribution(df: pd.DataFrame, view_mode: str, metric: str) -> pd.DataFrame:
+def build_detailed_muscle_distribution(df: pd.DataFrame, view_mode: str, metric: str, week_start: str = "Monday") -> pd.DataFrame:
     """
     返回：period_start | big_group | fine_muscle | value
     metric ∈ ["Workouts", "Duration", "Volume", "Sets"]
+    week_start: "Monday" 或 "Sunday"
     """
+    # 根据week_start重新计算week_period（与build_muscle_distribution保持一致）
+    if view_mode == "Week":
+        date_series = pd.to_datetime(df["date"], errors="coerce")
+        week_anchor = "W-SUN" if week_start == "Monday" else "W-SAT"
+        df = df.copy()
+        df["week_period"] = date_series.dt.to_period(week_anchor).apply(
+            lambda r: r.start_time.date() if pd.notna(r) else None
+        )
+    
     period_col = "week_period" if view_mode == "Week" else "month_period"
     
     # Get secondary muscle factor from session state
@@ -2202,6 +2327,13 @@ def build_detailed_muscle_distribution(df: pd.DataFrame, view_mode: str, metric:
         secondary_factor = float(st.session_state.get("secondary_muscle_factor", 0.5))
     except Exception:
         secondary_factor = 0.5
+
+    # 定义肌肉组包含关系（单向映射）
+    # Traps 包含 Upper Back 的数据（Upper Back 动作也计入 Traps）
+    # 但 Upper Back 不包含 Traps 的数据
+    MUSCLE_INCLUDES = {
+        "Upper Back": ["Traps"],  # Upper Back 的数据也计入 Traps
+    }
 
     rows = []
     for _, row in df.iterrows():
@@ -2224,6 +2356,20 @@ def build_detailed_muscle_distribution(df: pd.DataFrame, view_mode: str, metric:
                     "volume": vol * 1.0,
                 }
             )
+            # 如果该肌肉的数据需要计入其他肌肉
+            if pm in MUSCLE_INCLUDES:
+                for target_muscle in MUSCLE_INCLUDES[pm]:
+                    target_big = MUSCLE_TO_GROUP.get(target_muscle, big)
+                    rows.append(
+                        {
+                            "period": period,
+                            "workout_id": wid,
+                            "big_group": target_big,
+                            "fine_muscle": target_muscle,
+                            "set_factor": factor * 1.0,  # 主肌肉权重
+                            "volume": vol * 1.0,
+                        }
+                    )
 
         # other_muscles 作为 secondary，权重从设置获取
         om_str = row.get("other_muscles", "") or ""
@@ -2242,6 +2388,20 @@ def build_detailed_muscle_distribution(df: pd.DataFrame, view_mode: str, metric:
                             "volume": vol * secondary_factor,
                         }
                     )
+                    # 如果该肌肉的数据需要计入其他肌肉
+                    if m in MUSCLE_INCLUDES:
+                        for target_muscle in MUSCLE_INCLUDES[m]:
+                            target_big = MUSCLE_TO_GROUP.get(target_muscle, big)
+                            rows.append(
+                                {
+                                    "period": period,
+                                    "workout_id": wid,
+                                    "big_group": target_big,
+                                    "fine_muscle": target_muscle,
+                                    "set_factor": factor * secondary_factor,
+                                    "volume": vol * secondary_factor,
+                                }
+                            )
 
     if not rows:
         return pd.DataFrame(columns=["period_start", "big_group", "fine_muscle", "value"])
@@ -2336,36 +2496,60 @@ def render_workout_summary(period_summary: pd.DataFrame, view_mode: str, metric_
     if "workout_summary_metric" not in st.session_state:
         st.session_state.workout_summary_metric = metric_label
     
-    # Title with metric selector - align to top
+    current_metric = st.session_state.workout_summary_metric
+    
+    # Style for right-aligned compact button group with minimal gap
     st.markdown("""
         <style>
-        /* Align Workout Summary title and selector to top */
-        div[data-testid="column"]:has(div.stHeading h3#workout-summary) {
-            display: flex;
-            align-items: flex-start;
+        /* Compact buttons with minimal gap */
+        .st-key-ws_metric_btn_workouts button,
+        .st-key-ws_metric_btn_duration button,
+        .st-key-ws_metric_btn_volume button,
+        .st-key-ws_metric_btn_sets button {
+            min-width: 70px !important;
+            white-space: nowrap !important;
+            padding: 0.3rem 0.5rem !important;
+            font-size: 0.85rem !important;
         }
-        div[data-testid="column"]:has(.st-key-workout_summary_metric_selector) {
-            display: flex;
-            align-items: flex-start;
+        /* Reduce gap between button columns for Workout Summary */
+        div[data-testid="column"]:has(.st-key-ws_metric_btn_workouts),
+        div[data-testid="column"]:has(.st-key-ws_metric_btn_duration),
+        div[data-testid="column"]:has(.st-key-ws_metric_btn_volume),
+        div[data-testid="column"]:has(.st-key-ws_metric_btn_sets) {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: auto !important;
+            padding-left: 3px !important;
+            padding-right: 3px !important;
         }
         </style>
     """, unsafe_allow_html=True)
     
-    title_col, selector_col = st.columns([3, 1])
+    # Title and buttons on same row, buttons right-aligned
+    title_col, btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([6, 1, 1, 1, 1], gap="small")
+    
     with title_col:
         st.subheader("Workout Summary")
-    with selector_col:
-        metric_options = ["Workouts", "Duration", "Volume", "Sets"]
-        selected_metric = st.selectbox(
-            "Metric",
-            options=metric_options,
-            index=metric_options.index(st.session_state.workout_summary_metric) if st.session_state.workout_summary_metric in metric_options else 0,
-            key="workout_summary_metric_selector",
-            label_visibility="collapsed",
-        )
-        if selected_metric != st.session_state.workout_summary_metric:
-            st.session_state.workout_summary_metric = selected_metric
-            st.rerun()
+    with btn_col1:
+        if st.button("Workouts", key="ws_metric_btn_workouts", type="primary" if current_metric == "Workouts" else "secondary"):
+            if current_metric != "Workouts":
+                st.session_state.workout_summary_metric = "Workouts"
+                st.rerun()
+    with btn_col2:
+        if st.button("Duration", key="ws_metric_btn_duration", type="primary" if current_metric == "Duration" else "secondary"):
+            if current_metric != "Duration":
+                st.session_state.workout_summary_metric = "Duration"
+                st.rerun()
+    with btn_col3:
+        if st.button("Volume", key="ws_metric_btn_volume", type="primary" if current_metric == "Volume" else "secondary"):
+            if current_metric != "Volume":
+                st.session_state.workout_summary_metric = "Volume"
+                st.rerun()
+    with btn_col4:
+        if st.button("Sets", key="ws_metric_btn_sets", type="primary" if current_metric == "Sets" else "secondary"):
+            if current_metric != "Sets":
+                st.session_state.workout_summary_metric = "Sets"
+                st.rerun()
     
     # Use the independent metric for this section
     metric_label = st.session_state.workout_summary_metric
@@ -2717,7 +2901,8 @@ def render_muscle_distribution(df: pd.DataFrame,
                                muscle_df: pd.DataFrame,
                                detail_df: pd.DataFrame,
                                metric: str,
-                               active_period):
+                               active_period,
+                               raw_hevy_df: pd.DataFrame = None):
     """Render muscle distribution with radar chart and detailed breakdown."""
     if muscle_df.empty or active_period is None:
         st.info("No muscle distribution data.")
@@ -2727,36 +2912,69 @@ def render_muscle_distribution(df: pd.DataFrame,
     if "distribution_metric" not in st.session_state:
         st.session_state.distribution_metric = "Sets"
     
-    # Title with metric selector - align to top
+    current_metric = st.session_state.distribution_metric
+    
+    # Style for right-aligned compact button group with minimal gap
     st.markdown("""
         <style>
-        /* Align Muscle Distribution title and selector to top */
-        div[data-testid="column"]:has(div.stHeading h3#muscle-distribution) {
-            display: flex;
-            align-items: flex-start;
+        /* Compact buttons with minimal gap */
+        .st-key-metric_btn_sets button,
+        .st-key-metric_btn_volume button,
+        .st-key-metric_btn_workouts button {
+            min-width: 70px !important;
+            white-space: nowrap !important;
+            padding: 0.3rem 0.5rem !important;
+            font-size: 0.85rem !important;
         }
-        div[data-testid="column"]:has(.st-key-distribution_metric_selector) {
-            display: flex;
-            align-items: flex-start;
+        /* Reduce gap between button columns for Muscle Distribution */
+        div[data-testid="column"]:has(.st-key-metric_btn_sets),
+        div[data-testid="column"]:has(.st-key-metric_btn_volume),
+        div[data-testid="column"]:has(.st-key-metric_btn_workouts) {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: auto !important;
+            padding-left: 3px !important;
+            padding-right: 3px !important;
         }
         </style>
     """, unsafe_allow_html=True)
     
-    title_col, selector_col = st.columns([3, 1])
+    # Title and buttons on same row, buttons right-aligned
+    title_col, btn_col1, btn_col2, btn_col3 = st.columns([7, 1, 1, 1], gap="small")
+    
     with title_col:
         st.markdown('<h3 id="muscle-distribution">Muscle Distribution</h3>', unsafe_allow_html=True)
-    with selector_col:
-        metric_options = ["Sets", "Volume", "Workouts"]
-        selected_metric = st.selectbox(
-            "Metric",
-            options=metric_options,
-            index=metric_options.index(st.session_state.distribution_metric) if st.session_state.distribution_metric in metric_options else 0,
-            key="distribution_metric_selector",
-            label_visibility="collapsed",
-        )
-        if selected_metric != st.session_state.distribution_metric:
-            st.session_state.distribution_metric = selected_metric
-            st.rerun()
+    with btn_col1:
+        if st.button("Sets", key="metric_btn_sets", type="primary" if current_metric == "Sets" else "secondary"):
+            if current_metric != "Sets":
+                st.session_state.distribution_metric = "Sets"
+                st.rerun()
+    with btn_col2:
+        if st.button("Volume", key="metric_btn_volume", type="primary" if current_metric == "Volume" else "secondary"):
+            if current_metric != "Volume":
+                st.session_state.distribution_metric = "Volume"
+                st.rerun()
+    with btn_col3:
+        if st.button("Workouts", key="metric_btn_workouts", type="primary" if current_metric == "Workouts" else "secondary"):
+            if current_metric != "Workouts":
+                st.session_state.distribution_metric = "Workouts"
+                st.rerun()
+    
+    # Check for unconfigured custom exercises and show warning
+    if raw_hevy_df is not None:
+        unconfigured_exercises = get_unconfigured_custom_exercises(raw_hevy_df)
+        if unconfigured_exercises:
+            count = len(unconfigured_exercises)
+            exercise_list = ", ".join(unconfigured_exercises[:3])
+            if count > 3:
+                exercise_list += f" ... (+{count - 3} more)"
+            if st.button(
+                f"⚠️ {count} custom exercise(s) not configured: {exercise_list}. Click to configure.",
+                key="home_unconfigured_warning",
+                type="tertiary",
+            ):
+                st.session_state["nav_page"] = "Settings"
+                st.rerun()
     
     muscle_df = muscle_df.copy()
     detail_df = detail_df.copy()
@@ -2857,12 +3075,9 @@ def render_muscle_distribution(df: pd.DataFrame,
             xanchor="center",
             x=0.5
         ),
-        height=480,
+        height=400,
         margin=dict(l=20, r=20, t=20, b=60),
     )
-    
-    # 雷达图居中显示
-    st.plotly_chart(fig, use_container_width=True)
     
     # ---------- Muscle Training Heatmap ----------
     # 使用当前选择的 metric 渲染热力图
@@ -2911,10 +3126,34 @@ def render_muscle_distribution(df: pd.DataFrame,
     
     # 为tooltip准备所有metrics数据（Sets, Volume, Workouts）
     all_metrics_data = {}
+    all_previous_data = {}  # 每个metric对应的上一期数据
     for metric_type in ["Sets", "Volume", "Workouts"]:
         # 构建该metric的detail_df
-        temp_detail_df = build_detailed_muscle_distribution(df, st.session_state.view_mode, metric_type)
-        temp_current = temp_detail_df[temp_detail_df["period_start"] == active_period]
+        temp_detail_df = build_detailed_muscle_distribution(df, st.session_state.view_mode, metric_type, st.session_state.week_start)
+        
+        # 获取该metric的periods并找到对应的active和prev period
+        temp_periods = sorted(temp_detail_df["period_start"].unique(), reverse=True)
+        
+        # 找到与active_period匹配的period（考虑类型转换）
+        temp_active_period = None
+        temp_prev_period = None
+        active_period_str = str(active_period)
+        for i, p in enumerate(temp_periods):
+            if str(p) == active_period_str:
+                temp_active_period = p
+                if i < len(temp_periods) - 1:
+                    temp_prev_period = temp_periods[i + 1]
+                break
+        
+        temp_current = temp_detail_df[temp_detail_df["period_start"] == temp_active_period] if temp_active_period is not None else pd.DataFrame()
+        temp_prev = temp_detail_df[temp_detail_df["period_start"] == temp_prev_period] if temp_prev_period is not None else pd.DataFrame()
+        
+        # DEBUG: Print info for Workouts
+        if metric_type == "Workouts":
+            print(f"[DEBUG] Workouts - active_period: {active_period}, temp_active_period: {temp_active_period}, temp_prev_period: {temp_prev_period}")
+            print(f"[DEBUG] Workouts - temp_periods: {temp_periods[:3] if len(temp_periods) > 3 else temp_periods}")
+            print(f"[DEBUG] Workouts - temp_current muscles: {temp_current['fine_muscle'].unique().tolist() if not temp_current.empty else []}")
+            print(f"[DEBUG] Workouts - temp_prev muscles: {temp_prev['fine_muscle'].unique().tolist() if not temp_prev.empty else []}")
         
         metric_values_temp = {}
         if not temp_current.empty:
@@ -2927,39 +3166,110 @@ def render_muscle_distribution(df: pd.DataFrame,
                 metric_values_temp[fine_muscle] = value
         
         all_metrics_data[metric_type] = metric_values_temp
+        
+        # 计算该metric对应的上一期数据
+        prev_values_temp = {}
+        if not temp_prev.empty:
+            for _, row in temp_prev.iterrows():
+                fine_muscle = row["fine_muscle"]
+                value = float(row["value"])
+                # Volume需要转换单位
+                if metric_type == "Volume":
+                    value = convert_volume_for_display(value)
+                prev_values_temp[fine_muscle] = value
+        
+        # DEBUG: Print prev data for Workouts
+        if metric_type == "Workouts":
+            print(f"[DEBUG] Workouts - prev_values_temp: {prev_values_temp}")
+        
+        all_previous_data[metric_type] = prev_values_temp
     
-    # 使用 SVG 热力图
-    heatmap_html_path = Path(__file__).parent / "muscle_heatmap_svg.html"
-    if heatmap_html_path.exists():
-        with open(heatmap_html_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
-        
-        # 将肌肉数据注入到 HTML 中
-        muscle_data_json = json.dumps(muscle_values)
-        previous_data_json = json.dumps(previous_values) if previous_values else "null"
-        all_metrics_json = json.dumps(all_metrics_data)
-        
-        html_with_data = html_content.replace(
-            "MUSCLE_DATA_PLACEHOLDER",
-            muscle_data_json
-        ).replace(
-            "PREVIOUS_DATA_PLACEHOLDER",
-            previous_data_json
-        ).replace(
-            "METRICS_TYPE_PLACEHOLDER",
-            json.dumps(metric)
-        ).replace(
-            "PERIOD_TYPE_PLACEHOLDER",
-            json.dumps(st.session_state.view_mode)
-        ).replace(
-            "ALL_METRICS_PLACEHOLDER",
-            all_metrics_json
-        )
-        
-        # 使用 components.html 渲染
-        components.html(html_with_data, height=640, scrolling=False)
-    else:
-        st.warning("Muscle heatmap visualization file not found.")
+    # 热力图类型选择 - 使用 SVG overlay 方案
+    heatmap_image_path = Path(__file__).parent / "muscle_anatomy.png"
+    heatmap_svg_overlay_path = Path(__file__).parent / "muscle_heatmap_svg_overlay.html"
+    heatmap_svg_path = Path(__file__).parent / "muscle_heatmap_svg.html"
+    
+    # 创建两列布局：雷达图 | 热力图
+    radar_col, heatmap_col = st.columns([1, 2])
+    
+    # 在左列渲染雷达图
+    with radar_col:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # 在右列渲染热力图
+    with heatmap_col:
+        # 优先使用 SVG overlay 方案（图片 + SVG 路径叠加）
+        if heatmap_image_path.exists() and heatmap_svg_overlay_path.exists():
+            import base64
+            with open(heatmap_image_path, "rb") as img_file:
+                image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            
+            with open(heatmap_svg_overlay_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            
+            # 将肌肉数据和图片注入到 HTML 中
+            muscle_data_json = json.dumps(muscle_values)
+            previous_data_json = json.dumps(previous_values) if previous_values else "null"
+            all_metrics_json = json.dumps(all_metrics_data)
+            all_previous_json = json.dumps(all_previous_data)
+            
+            html_with_data = html_content.replace(
+                "BODY_IMAGE_PLACEHOLDER",
+                image_base64
+            ).replace(
+                "MUSCLE_DATA_PLACEHOLDER",
+                muscle_data_json
+            ).replace(
+                "PREVIOUS_DATA_PLACEHOLDER",
+                previous_data_json
+            ).replace(
+                "METRICS_TYPE_PLACEHOLDER",
+                json.dumps(metric)
+            ).replace(
+                "PERIOD_TYPE_PLACEHOLDER",
+                json.dumps(st.session_state.view_mode)
+            ).replace(
+                "ALL_METRICS_PLACEHOLDER",
+                all_metrics_json
+            ).replace(
+                "ALL_PREVIOUS_PLACEHOLDER",
+                all_previous_json
+            )
+            
+            # 使用 components.html 渲染
+            components.html(html_with_data, height=450, scrolling=False)
+        elif heatmap_svg_path.exists():
+            # 使用纯 SVG 热力图（fallback）
+            with open(heatmap_svg_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            
+            # 将肌肉数据注入到 HTML 中
+            muscle_data_json = json.dumps(muscle_values)
+            previous_data_json = json.dumps(previous_values) if previous_values else "null"
+            all_metrics_json = json.dumps(all_metrics_data)
+            all_previous_json = json.dumps(all_previous_data)
+            
+            html_with_data = html_content.replace(
+                "MUSCLE_DATA_PLACEHOLDER",
+                muscle_data_json
+            ).replace(
+                "PREVIOUS_DATA_PLACEHOLDER",
+                previous_data_json
+            ).replace(
+                "METRICS_TYPE_PLACEHOLDER",
+                json.dumps(metric)
+            ).replace(
+                "PERIOD_TYPE_PLACEHOLDER",
+                json.dumps(st.session_state.view_mode)
+            ).replace(
+                "ALL_METRICS_PLACEHOLDER",
+                all_metrics_json
+            )
+            
+            # 使用 components.html 渲染
+            components.html(html_with_data, height=450, scrolling=False)
+        else:
+            st.warning("Muscle heatmap visualization file not found.")
 
 
 # -----------------------------------
@@ -3043,7 +3353,11 @@ def render_workout_log(df: pd.DataFrame, view_mode: str, active_period):
                 .reset_index()
             )
 
-            for _, row in summary.iterrows():
+            for idx, (_, row) in enumerate(summary.iterrows()):
+                # Add divider between multiple workouts on the same day
+                if idx > 0:
+                    st.divider()
+                
                 # Workout start time in am/pm
                 workout_time = row["date"].strftime('%I:%M %p') if hasattr(row["date"], 'strftime') else ''
                 st.markdown(f"""
@@ -3852,6 +4166,8 @@ def main():
 
     if "nav_page" not in st.session_state:
         st.session_state["nav_page"] = "Home"
+    if "prev_nav_page" not in st.session_state:
+        st.session_state["prev_nav_page"] = "Home"
     if "data_source_choice" not in st.session_state:
         st.session_state["data_source_choice"] = "Connect to Hevy API"
     if "data_cache" not in st.session_state:
@@ -3969,6 +4285,41 @@ def main():
         st.session_state["nav_page"] = "Workouts Review"
 
     page = st.session_state["nav_page"]
+    
+    # Scroll to top when page changes
+    if page != st.session_state.get("prev_nav_page"):
+        st.session_state["prev_nav_page"] = page
+        # Use components.html with delayed scroll for reliability
+        components.html(
+            """
+            <script>
+                (function scrollToTop() {
+                    // Immediate scroll attempt
+                    function doScroll() {
+                        const mainEl = window.parent.document.querySelector('section.main');
+                        if (mainEl) {
+                            mainEl.scrollTop = 0;
+                        }
+                        const stMain = window.parent.document.querySelector('[data-testid="stMain"]');
+                        if (stMain) {
+                            stMain.scrollTop = 0;
+                        }
+                        window.parent.scrollTo(0, 0);
+                    }
+                    
+                    // Execute immediately
+                    doScroll();
+                    
+                    // Also execute after delays to catch late renders
+                    setTimeout(doScroll, 50);
+                    setTimeout(doScroll, 150);
+                    setTimeout(doScroll, 300);
+                })();
+            </script>
+            """,
+            height=0,
+        )
+    
     page_title = page_titles.get(page, "Hevy Data Analyzer")
     current_source = st.session_state["data_source_choice"]
     data_cache = st.session_state["data_cache"]
@@ -4346,6 +4697,34 @@ def main():
 
                     st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
 
+                    # Add CSS to style exercise title buttons as links
+                    st.markdown("""
+                    <style>
+                    /* Style exercise title buttons as links */
+                    [class*="st-key-ex_link_"] button {
+                        background: transparent !important;
+                        border: none !important;
+                        color: #1e40af !important;
+                        font-weight: 700 !important;
+                        font-size: 1.35rem !important;
+                        padding: 0 !important;
+                        text-align: left !important;
+                        cursor: pointer !important;
+                        min-height: 0 !important;
+                        line-height: 1.3 !important;
+                    }
+                    [class*="st-key-ex_link_"] button p {
+                        font-weight: 700 !important;
+                        font-size: 1.35rem !important;
+                        margin: 0 !important;
+                    }
+                    [class*="st-key-ex_link_"] button:hover {
+                        text-decoration: underline !important;
+                        color: #1e3a8a !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
                     # Exercises breakdown with media and per-set badges
                     # Determine exercise order strictly as they appear in the API/raw data
                     # Preserve original appearance order in `wdf` and keep the first occurrence
@@ -4408,21 +4787,13 @@ def main():
                         # The media column has been removed so subsequent elements shift left.
                         col_info, col_stat = st.columns([4.6, 1.4])
                         with col_info:
-                            # Render title larger and place a compact subtotal inline to its right
-                            try:
-                                # Render the exercise title only. Subtotal card removed per request.
-                                header_html = (
-                                    f"<div style='font-weight:700; font-size:1.2rem; margin-bottom:4px; white-space:normal;'>{ex_title}</div>"
-                                )
-                                st.markdown(header_html, unsafe_allow_html=True)
-                            except Exception:
-                                # fallback: render title and subtotal separately
-                                title_html = f"<div style='font-weight:700; font-size:1.2rem; margin-bottom:4px;'>{ex_title}</div>"
-                                st.markdown(title_html, unsafe_allow_html=True)
-                                try:
-                                    st.markdown(subtotal_html, unsafe_allow_html=True)
-                                except Exception:
-                                    pass
+                            # Render exercise title as a clickable button that navigates to Exercise Review
+                            # Use a unique key for each exercise button within this workout
+                            ex_btn_key = f"ex_link_{sel}_{ex_title}"
+                            if st.button(ex_title, key=ex_btn_key, type="tertiary"):
+                                st.session_state["selected_exercise"] = ex_title
+                                st.session_state["nav_page"] = "Exercise Review"
+                                st.rerun()
                         with col_stat:
                             # Right stat intentionally left blank — subtotal (Volume/Sets) is shown next to the title.
                             st.markdown("", unsafe_allow_html=True)
@@ -4583,6 +4954,21 @@ def main():
     # Exercise Review page implementation
     if page == "Exercise Review":
         st.divider()
+        
+        # Check for unconfigured custom exercises and show warning at the top
+        unconfigured_exercises = get_unconfigured_custom_exercises(raw_hevy_df)
+        if unconfigured_exercises:
+            count = len(unconfigured_exercises)
+            exercise_list = ", ".join(unconfigured_exercises[:3])
+            if count > 3:
+                exercise_list += f" ... (+{count - 3} more)"
+            if st.button(
+                f"⚠️ {count} custom exercise(s) not configured: {exercise_list}. Click to configure.",
+                key="exercise_review_unconfigured_warning",
+                type="tertiary",
+            ):
+                st.session_state["nav_page"] = "Settings"
+                st.rerun()
 
         # Prepare data
         ex_df = load_exercises()
@@ -4617,9 +5003,9 @@ def main():
             .sort_values("total_sets", ascending=False)
         )
 
-        # Reload exercises.csv fresh to ensure we have latest equipment/muscle data
-        # Use keep_default_na=False to preserve "None" string values (not convert to NaN)
-        fresh_ex_df = pd.read_csv("exercises.csv", keep_default_na=False, na_values=[""])
+        # Reload exercises fresh using load_exercises() which merges custom_exercises.csv
+        # This ensures we have the latest equipment/muscle data including user customizations
+        fresh_ex_df = load_exercises()
         fresh_ex_df["exercise_title"] = fresh_ex_df["exercise_title"].astype(str).str.strip()
         
         # Ensure required columns exist
@@ -4632,7 +5018,7 @@ def main():
         if "media_url" not in fresh_ex_df.columns:
             fresh_ex_df["media_url"] = ""
         
-        # Fill NaN values (empty cells become NaN with na_values=[""])
+        # Fill NaN values
         fresh_ex_df["equipment"] = fresh_ex_df["equipment"].fillna("")
         fresh_ex_df["primary_muscle"] = fresh_ex_df["primary_muscle"].fillna("")
         fresh_ex_df["other_muscles"] = fresh_ex_df["other_muscles"].fillna("")
@@ -5057,8 +5443,8 @@ def main():
                         if current_equip not in equip_options:
                             equip_options.append(current_equip)
                         
-                        # Build muscle options
-                        muscle_options = ["Not Set"] + sorted([m for m in muscles_list if m])
+                        # Build muscle options - "Not Set" for unconfigured, "None" for explicitly no muscle
+                        muscle_options = ["Not Set", "None"] + sorted([m for m in muscles_list if m])
                         current_muscle = ex_muscle if ex_muscle else "Not Set"
                         if current_muscle not in muscle_options:
                             muscle_options.append(current_muscle)
@@ -5148,7 +5534,7 @@ def main():
                         current_secondary = ex_other_muscles if ex_other_muscles else ""
                         current_secondary_list = [m.strip() for m in current_secondary.replace(",", ";").split(";") if m.strip()]
                         
-                        # Build options for secondary muscles (exclude "Not Set", include all muscles)
+                        # Build options for secondary muscles (exclude "None", include all muscles)
                         secondary_options = sorted([m for m in muscles_list if m])
                         
                         # Ensure current values are in options
@@ -5157,28 +5543,45 @@ def main():
                                 secondary_options.append(m)
                         secondary_options = sorted(secondary_options)
                         
+                        # Check if Primary Muscle is None or Not Set - if so, disable Secondary
+                        primary_is_none = (new_primary in ["None", "Not Set"])
+                        
                         # Secondary Muscle Group row: label + multiselect
                         sm_col1, sm_col2 = st.columns([2, 3])
                         with sm_col1:
                             with st.container(key="sm_label_col"):
                                 st.markdown("**Secondary Muscle Group**")
                         with sm_col2:
-                            new_secondary_list = st.multiselect(
-                                "Secondary Muscle Group",
-                                options=secondary_options,
-                                default=[m for m in current_secondary_list if m in secondary_options],
-                                key="custom_ex_secondary",
-                                placeholder="Select (optional)",
-                                label_visibility="collapsed",
-                            )
+                            if primary_is_none:
+                                # Show disabled placeholder when Primary is None
+                                st.selectbox(
+                                    "Secondary Muscle Group",
+                                    options=["None"],
+                                    index=0,
+                                    key="custom_ex_secondary_disabled",
+                                    disabled=True,
+                                    label_visibility="collapsed",
+                                )
+                                new_secondary_list = []
+                            else:
+                                new_secondary_list = st.multiselect(
+                                    "Secondary Muscle Group",
+                                    options=secondary_options,
+                                    default=[m for m in current_secondary_list if m in secondary_options],
+                                    key="custom_ex_secondary",
+                                    placeholder="Select (optional)",
+                                    label_visibility="collapsed",
+                                )
                         
                         # Convert list to semicolon-separated string
                         new_secondary = "; ".join(new_secondary_list) if new_secondary_list else ""
                         
                         # Auto-save when values change
+                        # "Not Set" saves as empty string, "None" is a valid value for bodyweight equipment
                         save_equip = "" if new_equipment == "Not Set" else new_equipment
-                        save_primary = "" if new_primary == "Not Set" else new_primary
-                        save_secondary = new_secondary
+                        save_primary = "" if new_primary in ["Not Set", "None"] else new_primary
+                        # If Primary is None or Not Set, force Secondary to be empty
+                        save_secondary = "" if new_primary in ["None", "Not Set"] else new_secondary
                         
                         # Check if anything changed
                         if (save_equip != ex_equipment or 
@@ -6131,6 +6534,34 @@ def main():
                     st.markdown(f"## {sel_exercise} - History")
                     st.divider()
 
+                    # Add CSS to style workout title buttons as links (h2 size)
+                    st.markdown("""
+                    <style>
+                    /* Style workout title buttons as links with h2 size */
+                    [class*="st-key-workout_link_"] button {
+                        background: transparent !important;
+                        border: none !important;
+                        color: #1e40af !important;
+                        font-weight: 700 !important;
+                        font-size: 1.75rem !important;
+                        padding: 0 !important;
+                        text-align: left !important;
+                        cursor: pointer !important;
+                        min-height: 0 !important;
+                        line-height: 1.3 !important;
+                    }
+                    [class*="st-key-workout_link_"] button p {
+                        font-weight: 700 !important;
+                        font-size: 1.75rem !important;
+                        margin: 0 !important;
+                    }
+                    [class*="st-key-workout_link_"] button:hover {
+                        text-decoration: underline !important;
+                        color: #1e3a8a !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
                     if ex_data_all.empty:
                         st.info("暂无该动作的训练记录。")
                     else:
@@ -6143,8 +6574,12 @@ def main():
                             workout_date = wdf["start_dt"].iloc[0]
                             workout_date_str = workout_date.strftime("%Y-%m-%d %H:%M") if hasattr(workout_date, "strftime") else str(workout_date)
 
-                            # Workout header - Title on top, date below (matching Workouts Review format)
-                            st.markdown(f"## {workout_title}")
+                            # Workout header - Title as clickable button that navigates to Workouts Review
+                            workout_btn_key = f"workout_link_{workout_id}"
+                            if st.button(workout_title, key=workout_btn_key, type="tertiary"):
+                                st.session_state["selected_workout_id"] = workout_id
+                                st.session_state["nav_page"] = "Workouts Review"
+                                st.rerun()
                             st.caption(workout_date_str)
 
                             # Show sets for this exercise in this workout
@@ -6565,15 +7000,17 @@ def main():
         custom_ex_titles = set(custom_ex_df["exercise_title"].tolist()) if len(custom_ex_df) > 0 else set()
         
         # Load equipment and muscle options
+        csv_path = APP_DIR / "exercises.csv"
         try:
-            exercises_csv = pd.read_csv("exercises.csv", keep_default_na=False, na_values=[""])
-            csv_exercise_titles = set(exercises_csv["exercise_title"].unique())
-            all_equipment = set(exercises_csv["equipment"].unique().tolist())
-            equipment_options = ["None"] + sorted([e for e in all_equipment if e and str(e).strip() and str(e) != "None"])
+            exercises_csv = pd.read_csv(csv_path, keep_default_na=False, na_values=[""])
+            csv_exercise_titles = set(exercises_csv["exercise_title"].astype(str).str.strip().unique())
+            # Handle NaN values properly - convert to string first
+            all_equipment = exercises_csv["equipment"].fillna("").astype(str).unique().tolist()
+            equipment_options = ["None"] + sorted([e for e in all_equipment if e and e.strip() and e != "None"])
             if "Other" in all_equipment:
                 equipment_options = ["None"] + sorted([e for e in equipment_options if e not in ["None", "Other"]]) + ["Other"]
-            all_muscles = set(exercises_csv["primary_muscle"].unique().tolist())
-            muscle_options = sorted([m for m in all_muscles if m and str(m).strip()])
+            all_muscles = exercises_csv["primary_muscle"].fillna("").astype(str).unique().tolist()
+            muscle_options = sorted([m for m in all_muscles if m and m.strip()])
         except Exception:
             csv_exercise_titles = set()
             equipment_options = ["None", "Barbell", "Dumbbell", "Machine", "Cable", "Bodyweight", "Other"]
@@ -6582,9 +7019,10 @@ def main():
         # Find unknown exercises from user's workout data
         unknown_exercises = []
         if raw_hevy_df is not None and not raw_hevy_df.empty:
-            user_exercise_titles = set(raw_hevy_df["exercise_title"].unique())
+            user_exercise_titles = set(raw_hevy_df["exercise_title"].astype(str).str.strip().unique())
             # Unknown = in user data but not in exercises.csv AND not already in custom_exercises.csv
-            unknown_titles = user_exercise_titles - csv_exercise_titles - custom_ex_titles
+            custom_ex_titles_stripped = set(str(t).strip() for t in custom_ex_titles)
+            unknown_titles = user_exercise_titles - csv_exercise_titles - custom_ex_titles_stripped
             unknown_exercises = sorted(list(unknown_titles))
         
         # Combine: custom exercises (already configured) + unknown exercises (not configured)
@@ -6742,45 +7180,69 @@ def main():
                             st.markdown(f"**{ex_title}**<br><span style='color: #f97316; font-size: 12px;'>⚠️ Not configured</span>", unsafe_allow_html=True)
                     
                     with col1:
-                        current_equip = ex_data["equipment"] if ex_data["equipment"] else "None"
-                        equip_opts = equipment_options.copy()
-                        if current_equip not in equip_opts:
-                            equip_opts.append(current_equip)
+                        # "None" is a valid equipment value (bodyweight), "" means Not Set
+                        current_equip = ex_data["equipment"]
+                        if current_equip == "" or pd.isna(current_equip):
+                            current_equip = "Not Set"
+                        equip_opts_with_notset = ["Not Set"] + equipment_options
+                        if current_equip not in equip_opts_with_notset:
+                            equip_opts_with_notset.append(current_equip)
                         new_equip = st.selectbox(
                             "Equipment",
-                            options=equip_opts,
-                            index=equip_opts.index(current_equip) if current_equip in equip_opts else 0,
+                            options=equip_opts_with_notset,
+                            index=equip_opts_with_notset.index(current_equip) if current_equip in equip_opts_with_notset else 0,
                             key=f"settings_equip_{idx}",
                             label_visibility="collapsed",
                         )
                     
                     with col2:
-                        current_muscle = ex_data["primary_muscle"] if ex_data["primary_muscle"] else ""
-                        muscle_opts_with_empty = [""] + muscle_options
-                        if current_muscle and current_muscle not in muscle_opts_with_empty:
-                            muscle_opts_with_empty.append(current_muscle)
+                        # "None" means explicitly no primary muscle, "" means Not Set
+                        current_muscle = ex_data["primary_muscle"]
+                        if current_muscle == "" or pd.isna(current_muscle):
+                            current_muscle = "Not Set"
+                        muscle_opts_with_notset = ["Not Set", "None"] + muscle_options
+                        if current_muscle not in muscle_opts_with_notset:
+                            muscle_opts_with_notset.append(current_muscle)
                         new_muscle = st.selectbox(
                             "Primary Muscle",
-                            options=muscle_opts_with_empty,
-                            index=muscle_opts_with_empty.index(current_muscle) if current_muscle in muscle_opts_with_empty else 0,
+                            options=muscle_opts_with_notset,
+                            index=muscle_opts_with_notset.index(current_muscle) if current_muscle in muscle_opts_with_notset else 0,
                             key=f"settings_muscle_{idx}",
                             label_visibility="collapsed",
                         )
                     
                     with col3:
+                        # Check if Primary Muscle is None or Not Set - if so, disable Secondary
+                        primary_is_none = (new_muscle in ["None", "Not Set"])
                         current_secondary = ex_data["secondary_muscles"] if ex_data["secondary_muscles"] else ""
                         current_secondary_list = [m.strip() for m in current_secondary.replace(",", ";").split(";") if m.strip()]
-                        new_secondary_list = st.multiselect(
-                            "Secondary Muscles",
-                            options=muscle_options,
-                            default=[m for m in current_secondary_list if m in muscle_options],
-                            key=f"settings_secondary_{idx}",
-                            label_visibility="collapsed",
-                            placeholder="Select...",
-                        )
+                        
+                        if primary_is_none:
+                            # Show disabled placeholder when Primary is None
+                            st.selectbox(
+                                "Secondary Muscles",
+                                options=["None"],
+                                index=0,
+                                key=f"settings_secondary_{idx}",
+                                disabled=True,
+                                label_visibility="collapsed",
+                            )
+                            new_secondary_list = []
+                        else:
+                            new_secondary_list = st.multiselect(
+                                "Secondary Muscles",
+                                options=muscle_options,
+                                default=[m for m in current_secondary_list if m in muscle_options],
+                                key=f"settings_secondary_{idx}",
+                                label_visibility="collapsed",
+                                placeholder="Select...",
+                            )
                     
-                    save_equip = "" if new_equip == "None" else new_equip
-                    new_secondary = "; ".join(new_secondary_list) if new_secondary_list else ""
+                    # "Not Set" saves as empty string, "None" is a valid value to save
+                    save_equip = "" if new_equip == "Not Set" else new_equip
+                    save_primary = "" if new_muscle == "Not Set" else ("" if new_muscle == "None" else new_muscle)
+                    # If Primary is None or Not Set, force Secondary to be empty
+                    new_secondary = "" if new_muscle in ["None", "Not Set"] else ("; ".join(new_secondary_list) if new_secondary_list else "")
                     
                     updated_rows.append({
                         "exercise_title": ex_title,
@@ -6808,7 +7270,7 @@ def main():
     raw_hevy_df["body_weight"] = body_weight_value
     raw_hevy_df["body_weight"] = pd.to_numeric(raw_hevy_df["body_weight"], errors="coerce")
 
-    exercises_df = load_exercises("exercises.csv")
+    exercises_df = load_exercises()
 
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "Week"
@@ -6858,8 +7320,8 @@ def main():
         if "distribution_metric" not in st.session_state:
             st.session_state.distribution_metric = "Sets"
         muscle_df = build_muscle_distribution(df, st.session_state.view_mode, st.session_state.distribution_metric, st.session_state.week_start)
-        detail_df = build_detailed_muscle_distribution(df, st.session_state.view_mode, st.session_state.distribution_metric)
-        render_muscle_distribution(df, muscle_df, detail_df, st.session_state.distribution_metric, st.session_state.active_period)
+        detail_df = build_detailed_muscle_distribution(df, st.session_state.view_mode, st.session_state.distribution_metric, st.session_state.week_start)
+        render_muscle_distribution(df, muscle_df, detail_df, st.session_state.distribution_metric, st.session_state.active_period, raw_hevy_df)
 
         st.markdown("---")
 
